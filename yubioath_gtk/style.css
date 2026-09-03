@@ -1,0 +1,23 @@
+.otp-code {
+  font-family: monospace;
+  font-size: 1.45em;
+  font-weight: 500;
+  font-feature-settings: "tnum";
+  letter-spacing: 0.04em;
+}
+
+.account-row {
+  transition: background-color 250ms ease-out;
+}
+
+.account-row.copied {
+  background-color: alpha(@accent_bg_color, 0.25);
+}
+
+.unlock-box {
+  margin-top: 12px;
+}
+
+.device-caption {
+  font-size: 0.85em;
+}

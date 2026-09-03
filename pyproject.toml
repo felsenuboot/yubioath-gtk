@@ -1,0 +1,23 @@
+[project]
+name = "yubioath-gtk"
+version = "0.1.0"
+description = "OATH one-time passwords from your YubiKey, in GTK4 + libadwaita"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["yubikey-manager>=5.5", "PyGObject>=3.46"]
+
+[project.scripts]
+yubioath-gtk = "yubioath_gtk.app:main_entry"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["yubioath_gtk"]
+
+[tool.setuptools.package-data]
+yubioath_gtk = ["style.css", "icons/**/*.svg"]
+
+[tool.ruff]
+line-length = 110

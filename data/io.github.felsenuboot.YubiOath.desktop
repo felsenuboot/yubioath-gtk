@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=YubiOath
+Comment=One-time passwords from your YubiKey
+Exec=yubioath-gtk
+Icon=io.github.felsenuboot.YubiOath
+Terminal=false
+Categories=Utility;Security;GTK;
+Keywords=otp;totp;2fa;yubikey;authenticator;
+StartupNotify=true
