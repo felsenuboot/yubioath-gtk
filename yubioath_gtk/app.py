@@ -42,11 +42,11 @@ class YubiOathApp(Adw.Application):
         about = Gio.SimpleAction.new("about", None)
         about.connect("activate", self._about)
         self.add_action(about)
-        self.backend.start()
 
     def do_activate(self) -> None:
         if self.window is None:
             self.window = MainWindow(self, self.backend)
+            self.backend.start()
         self.window.present()
 
     def do_shutdown(self) -> None:

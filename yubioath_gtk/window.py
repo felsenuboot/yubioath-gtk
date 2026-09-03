@@ -14,6 +14,10 @@ from .add_dialog import AddAccountDialog  # noqa: E402
 from .backend import Backend, DeviceState  # noqa: E402
 from .widgets import AccountRow  # noqa: E402
 
+import logging  # noqa: E402
+
+log = logging.getLogger(__name__)
+
 
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application, backend: Backend) -> None:
@@ -68,6 +72,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.stack.add_named(self._build_no_key(), "no-key")
         self.stack.add_named(self._build_no_service(), "no-service")
+        self.stack.add_named(self._build_busy(), "busy")
         self.stack.add_named(self._build_unlock(), "unlock")
         self.stack.add_named(self._build_empty(), "empty")
         self.stack.add_named(self._build_list(), "list")
@@ -125,6 +130,17 @@ class MainWindow(Adw.ApplicationWindow):
         cmd.set_xalign(0)
         page.set_child(cmd)
         return page
+
+    def _build_busy(self) -> Gtk.Widget:
+        return Adw.StatusPage(
+            icon_name="system-lock-screen-symbolic",
+            title="YubiKey is in use",
+            description=(
+                "Another program holds the YubiKey's smart card interface, "
+                "usually Yubico Authenticator or GnuPG's scdaemon. "
+                "Close it and the key will appear here."
+            ),
+        )
 
     def _build_empty(self) -> Gtk.Widget:
         page = Adw.StatusPage(
@@ -190,11 +206,17 @@ class MainWindow(Adw.ApplicationWindow):
             self.stack.set_visible_child_name("no-key")
 
     def _on_device(self, state: DeviceState | None) -> None:
+        log.debug("on_device: %r", state)
         if state is None:
             self.title_widget.set_subtitle("")
             self._clear_rows()
             if getattr(self, "_service_ok", True):
                 self.stack.set_visible_child_name("no-key")
+            return
+        if state.busy:
+            self.title_widget.set_subtitle("")
+            self._clear_rows()
+            self.stack.set_visible_child_name("busy")
             return
         sub = state.name + (f" · {state.serial}" if state.serial else "")
         self.title_widget.set_subtitle(sub)

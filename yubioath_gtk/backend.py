@@ -41,6 +41,7 @@ class DeviceState:
     device_id: str | None = None
     locked: bool = False
     bad_password: bool = False
+    busy: bool = False  # another process holds the CCID interface
 
 
 class BackendError(Exception):
@@ -134,7 +135,14 @@ class Backend:
                 self._poll(force=True)
 
     def _emit(self, cb, *args) -> None:
-        GLib.idle_add(lambda: (cb(*args), False)[1])
+        """Dispatch to the main loop. Callbacks are resolved by attribute name at
+        dispatch time so a handler assigned after the thread started still runs."""
+        name = next((n for n in ("on_device", "on_accounts", "on_code", "on_error", "on_service")
+                     if getattr(self, n) is cb), None)
+        if name:
+            GLib.idle_add(lambda: (getattr(self, name)(*args), False)[1])
+        else:
+            GLib.idle_add(lambda: (cb(*args), False)[1])
 
     def _poll(self, force: bool = False) -> None:
         ok = _pcsc_available()
@@ -154,7 +162,17 @@ class Backend:
             fp = dev.fingerprint
         else:
             dev, info, fp = None, None, None
+        if dev is None and ok and _yubikey_busy():
+            fp = "busy"
+        log.debug("poll: service=%s devices=%d fp=%r prev=%r", ok, len(devices), fp, self._fingerprint)
         if fp == self._fingerprint and not force:
+            return
+        if fp == "busy":
+            self._fingerprint = fp
+            self._device = None
+            self._key = None
+            self._state = DeviceState(name="YubiKey", serial=None, busy=True)
+            self._emit(self.on_device, self._state)
             return
         self._fingerprint = fp
         self._device = dev
@@ -337,6 +355,27 @@ def _pcsc_available() -> bool:
         return True
     except Exception as e:  # noqa: BLE001
         return "Service not available" not in str(e) and "0x8010001D" not in str(e)
+
+
+def _yubikey_busy() -> bool:
+    """True when a YubiKey reader exists but the card is locked by another client
+    (typically Yubico Authenticator or GnuPG's scdaemon)."""
+    try:
+        from smartcard.System import readers  # noqa: PLC0415
+
+        for r in readers():
+            if "yubi" not in str(r).lower():
+                continue
+            conn = r.createConnection()
+            try:
+                conn.connect()
+                conn.disconnect()
+            except Exception as e:  # noqa: BLE001
+                if "0x8010000B" in str(e) or "Sharing violation" in str(e):
+                    return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 def _sort_key(c: Credential):
