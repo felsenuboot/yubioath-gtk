@@ -379,7 +379,7 @@ def _yubikey_busy() -> bool:
 
 
 def _sort_key(c: Credential):
-    return ((c.issuer or "").lower(), c.name.lower())
+    return ((c.issuer or c.name).lower(), c.name.lower())
 
 
 # -- libsecret ---------------------------------------------------------------

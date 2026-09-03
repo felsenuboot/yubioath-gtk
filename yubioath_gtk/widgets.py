@@ -80,6 +80,7 @@ class AccountRow(Gtk.ListBoxRow):
         "calculate-requested": (GObject.SignalFlags.RUN_FIRST, None, ()),
         "rename-requested": (GObject.SignalFlags.RUN_FIRST, None, ()),
         "delete-requested": (GObject.SignalFlags.RUN_FIRST, None, ()),
+        "favorite-toggled": (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
     def __init__(self, cred: Credential) -> None:
@@ -87,6 +88,9 @@ class AccountRow(Gtk.ListBoxRow):
         self.cred = cred
         self.code: Code | None = None
         self._pending = False
+        self.favorite = False
+        self.hide_codes = False
+        self.revealed = False
         self.add_css_class("account-row")
         self.set_activatable(True)
 
@@ -96,15 +100,27 @@ class AccountRow(Gtk.ListBoxRow):
         box.set_margin_start(14)
         box.set_margin_end(10)
 
+        self.avatar = Adw.Avatar(size=36, show_initials=True)
+        self.avatar.set_valign(Gtk.Align.CENTER)
+        self.avatar.set_visible(False)
+        box.append(self.avatar)
+
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.CENTER)
+        title = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         self.issuer_label = Gtk.Label(xalign=0, ellipsize=3)
         self.issuer_label.add_css_class("heading")
+        self.star = Gtk.Image.new_from_icon_name("starred-symbolic")
+        self.star.set_pixel_size(12)
+        self.star.add_css_class("favorite-star")
+        self.star.set_visible(False)
+        title.append(self.issuer_label)
+        title.append(self.star)
         self.name_label = Gtk.Label(xalign=0, ellipsize=3)
         self.name_label.add_css_class("dim-label")
         self.name_label.add_css_class("caption")
-        text.append(self.issuer_label)
+        text.append(title)
         text.append(self.name_label)
         box.append(text)
 
@@ -156,6 +172,28 @@ class AccountRow(Gtk.ListBoxRow):
         else:
             self.issuer_label.set_text(c.name)
             self.name_label.set_visible(False)
+        self.avatar.set_text(c.issuer or c.name)
+
+    def set_favorite(self, fav: bool) -> None:
+        self.favorite = fav
+        self.star.set_visible(fav)
+        self.fav_button.set_label("Remove from favorites" if fav else "Add to favorites")
+
+    def set_icon(self, paintable) -> None:
+        """Show an issuer logo (any Gdk.Paintable), or initials when None."""
+        self.avatar.set_custom_image(paintable)
+
+    def set_avatar_visible(self, visible: bool) -> None:
+        self.avatar.set_visible(visible)
+
+    def set_hide_codes(self, hide: bool) -> None:
+        self.hide_codes = hide
+        self.revealed = False
+        self._refresh_indicator()
+
+    def reveal(self) -> None:
+        self.revealed = True
+        self._refresh_indicator()
 
     @property
     def search_text(self) -> str:
@@ -182,15 +220,24 @@ class AccountRow(Gtk.ListBoxRow):
         remaining = self.code.valid_to - now
         if remaining <= 0:
             self.code = None
+            self.revealed = False
             self._refresh_indicator()
             return
         total = max(self.code.valid_to - self.code.valid_from, 1)
         self.ring.set_fraction(remaining / total, remaining < 5)
 
+    @property
+    def code_visible(self) -> bool:
+        return self.code is not None and (not self.hide_codes or self.revealed)
+
     def _refresh_indicator(self) -> None:
-        if self.code is None:
-            self.code_label.set_text("••• •••" if self.cred.oath_type == OATH_TYPE.TOTP else "••• •••")
+        if self.code is None or not self.code_visible:
+            self.code_label.set_text("••• •••")
             self.code_label.add_css_class("dim-label")
+            if self.code is not None:  # hidden but valid: keep the ring ticking
+                self.indicator.set_visible_child_name("hotp" if self.cred.oath_type == OATH_TYPE.HOTP else "ring")
+                self.tick(time.time())
+                return
             if self.cred.oath_type == OATH_TYPE.HOTP:
                 self.indicator.set_visible_child_name("hotp")
             elif self.cred.touch_required:
@@ -221,6 +268,7 @@ class AccountRow(Gtk.ListBoxRow):
         box.add_css_class("menu")
         for label, signal, cls in (
             ("Copy code", "copy-requested", None),
+            ("Add to favorites", "favorite-toggled", None),
             ("Rename…", "rename-requested", None),
             ("Delete…", "delete-requested", "destructive-action"),
         ):
@@ -232,5 +280,7 @@ class AccountRow(Gtk.ListBoxRow):
                 b.add_css_class(cls)
             b.connect("clicked", lambda _b, s=signal: (pop.popdown(), self.emit(s)))
             box.append(b)
+            if signal == "favorite-toggled":
+                self.fav_button = b
         pop.set_child(box)
         return pop

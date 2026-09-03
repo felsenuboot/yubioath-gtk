@@ -19,9 +19,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 class YubiOathApp(Adw.Application):
     def __init__(self) -> None:
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+        fake = bool(os.environ.get("YUBIOATH_FAKE"))
+        super().__init__(
+            application_id=APP_ID + (".Devel" if fake else ""), flags=Gio.ApplicationFlags.DEFAULT_FLAGS
+        )
         GLib.set_application_name(APP_NAME)
-        if os.environ.get("YUBIOATH_FAKE"):
+        if fake:
             from ._fake import FakeBackend  # noqa: PLC0415
 
             self.backend = FakeBackend()
@@ -39,6 +42,9 @@ class YubiOathApp(Adw.Application):
         Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(
             os.path.join(HERE, "icons")
         )
+        from .config import config  # noqa: PLC0415
+
+        self._apply_theme(config.get("theme"))
         about = Gio.SimpleAction.new("about", None)
         about.connect("activate", self._about)
         self.add_action(about)
@@ -52,6 +58,14 @@ class YubiOathApp(Adw.Application):
     def do_shutdown(self) -> None:
         self.backend.stop()
         Adw.Application.do_shutdown(self)
+
+    @staticmethod
+    def _apply_theme(theme: str) -> None:
+        scheme = {
+            "light": Adw.ColorScheme.FORCE_LIGHT,
+            "dark": Adw.ColorScheme.FORCE_DARK,
+        }.get(theme, Adw.ColorScheme.DEFAULT)
+        Adw.StyleManager.get_default().set_color_scheme(scheme)
 
     def _about(self, *_) -> None:
         dlg = Adw.AboutDialog(

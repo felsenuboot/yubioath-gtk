@@ -21,3 +21,8 @@
 .device-caption {
   font-size: 0.85em;
 }
+
+.favorite-star {
+  color: @warning_color;
+  opacity: 0.9;
+}

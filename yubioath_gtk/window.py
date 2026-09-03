@@ -12,6 +12,9 @@ from yubikit.oath import OATH_TYPE, Code, Credential, CredentialData  # noqa: E4
 
 from .add_dialog import AddAccountDialog  # noqa: E402
 from .backend import Backend, DeviceState  # noqa: E402
+from .config import config  # noqa: E402
+from .icons import load_pack  # noqa: E402
+from .prefs import PreferencesDialog  # noqa: E402
 from .widgets import AccountRow  # noqa: E402
 
 import logging  # noqa: E402
@@ -27,6 +30,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.backend = backend
         self.rows: dict[bytes, AccountRow] = {}
         self._refresh_source: int | None = None
+        self._clip_source: int | None = None
+        self._creds: list[Credential] = []
+        self.icon_pack = load_pack(config.get("icon_pack"))
 
         backend.on_device = self._on_device
         backend.on_accounts = self._on_accounts
@@ -84,6 +90,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._add_action("forget-password", lambda *_: self.backend.forget_password())
         self._add_action("search", lambda *_: self.search_bar.set_search_mode(True), ["<Control>f"])
         self._add_action("close", lambda *_: self.close(), ["<Control>w", "<Control>q"])
+        self._add_action("preferences", lambda *_: PreferencesDialog(self._pref_changed).present(self), ["<Control>comma"])
 
         GLib.timeout_add(250, self._tick)
 
@@ -95,6 +102,7 @@ class MainWindow(Adw.ApplicationWindow):
         m = Gio.Menu()
         m.append("Refresh", "win.refresh")
         m.append("Forget saved password", "win.forget-password")
+        m.append("Preferences", "win.preferences")
         m.append("About YubiOath", "app.about")
         return m
 
@@ -234,8 +242,11 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_accounts(self, creds: list[Credential], codes: dict[bytes, Code]) -> None:
         self.password_row.set_text("")
         self.password_row.remove_css_class("error")
+        self._creds = creds
+        hide = bool(config.get("hide_codes"))
+        ordered = self._ordered(creds)
         seen = set()
-        for i, cred in enumerate(creds):
+        for i, cred in enumerate(ordered):
             seen.add(cred.id)
             row = self.rows.get(cred.id)
             if row is None:
@@ -244,11 +255,15 @@ class MainWindow(Adw.ApplicationWindow):
                 row.connect("calculate-requested", self._row_calculate)
                 row.connect("rename-requested", self._row_rename)
                 row.connect("delete-requested", self._row_delete)
+                row.connect("favorite-toggled", self._row_favorite)
+                row.hide_codes = hide
+                self._decorate(row)
                 self.rows[cred.id] = row
                 self.listbox.insert(row, i)
             else:
                 row.cred = cred
                 row.update_labels()
+                self._decorate(row)
                 if row.get_index() != i:
                     self.listbox.remove(row)
                     self.listbox.insert(row, i)
@@ -265,7 +280,49 @@ class MainWindow(Adw.ApplicationWindow):
         if row is None:
             return
         row.set_code(code)
+        row.reveal()
         self._copy(row)
+
+    # -- ordering, favorites, icons ------------------------------------------
+
+    def _is_fav(self, cred: Credential) -> bool:
+        return config.is_favorite(cred.device_id, cred.id)
+
+    def _ordered(self, creds: list[Credential]) -> list[Credential]:
+        return sorted(creds, key=lambda c: (not self._is_fav(c), (c.issuer or c.name).lower(), c.name.lower()))
+
+    def _decorate(self, row: AccountRow) -> None:
+        row.set_favorite(self._is_fav(row.cred))
+        if self.icon_pack is not None:
+            row.set_avatar_visible(True)
+            row.set_icon(self.icon_pack.lookup(row.cred.issuer, row.cred.name))
+        else:
+            row.set_avatar_visible(False)
+
+    def _reorder(self) -> None:
+        for i, cred in enumerate(self._ordered(self._creds)):
+            row = self.rows.get(cred.id)
+            if row is not None and row.get_index() != i:
+                self.listbox.remove(row)
+                self.listbox.insert(row, i)
+
+    def _row_favorite(self, row: AccountRow) -> None:
+        config.set_favorite(row.cred.device_id, row.cred.id, not row.favorite)
+        row.set_favorite(not row.favorite)
+        self._reorder()
+
+    def _pref_changed(self, key: str) -> None:
+        if key == "theme":
+            self.get_application()._apply_theme(config.get("theme"))
+        elif key == "icon_pack":
+            self.icon_pack = load_pack(config.get("icon_pack"))
+            if config.get("icon_pack") and self.icon_pack is None:
+                self._toast("Could not load icon pack")
+            for row in self.rows.values():
+                self._decorate(row)
+        elif key == "hide_codes":
+            for row in self.rows.values():
+                row.set_hide_codes(bool(config.get("hide_codes")))
 
     def _on_error(self, msg: str) -> None:
         for row in self.rows.values():
@@ -303,6 +360,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _row_primary(self, row: AccountRow) -> None:
         if row.code is not None and (row.cred.oath_type == OATH_TYPE.HOTP or row.code.valid_to > time.time()):
+            row.reveal()
             self._copy(row)
         else:
             self._row_calculate(row)
@@ -314,10 +372,25 @@ class MainWindow(Adw.ApplicationWindow):
             self._copy(row)
 
     def _copy(self, row: AccountRow) -> None:
-        Gdk.Display.get_default().get_clipboard().set(row.code.value)
+        clipboard = Gdk.Display.get_default().get_clipboard()
+        clipboard.set(row.code.value)
         row.flash_copied()
         label = row.cred.issuer or row.cred.name
         self._toast(f"Code for {label} copied", 2)
+        if self._clip_source:
+            GLib.source_remove(self._clip_source)
+            self._clip_source = None
+        secs = int(config.get("clipboard_clear") or 0)
+        if secs > 0:
+            value = row.code.value
+
+            def clear() -> bool:
+                self._clip_source = None
+                if clipboard.is_local():  # still ours, nobody else copied since
+                    clipboard.read_text_async(None, lambda c, r: _clear_if(c, r, value))
+                return False
+
+            self._clip_source = GLib.timeout_add_seconds(secs, clear)
 
     def _row_calculate(self, row: AccountRow) -> None:
         if row._pending:
@@ -408,3 +481,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _toast(self, msg: str, timeout: int = 4) -> None:
         self.toasts.add_toast(Adw.Toast(title=msg, timeout=timeout))
+
+
+def _clear_if(clipboard: Gdk.Clipboard, result, value: str) -> None:
+    try:
+        text = clipboard.read_text_finish(result)
+    except Exception:  # noqa: BLE001
+        return
+    if text == value:
+        clipboard.set("")
