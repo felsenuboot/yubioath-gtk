@@ -18,9 +18,11 @@ from gi.repository import GLib, Secret  # noqa: E402
 from ykman.device import list_all_devices  # noqa: E402
 from yubikit.core import ApplicationNotAvailableError  # noqa: E402
 from yubikit.core.smartcard import ApduError, SW, SmartCardConnection  # noqa: E402
+from yubikit.management import CAPABILITY, FORM_FACTOR, TRANSPORT  # noqa: E402
 from yubikit.oath import Code, Credential, CredentialData, OathSession  # noqa: E402
 
 from . import APP_ID  # noqa: E402
+from .config import config  # noqa: E402
 
 log = logging.getLogger(__name__)
 logging.getLogger("ykman").setLevel(logging.CRITICAL)
@@ -42,6 +44,25 @@ class DeviceState:
     locked: bool = False
     bad_password: bool = False
     busy: bool = False  # another process holds the CCID interface
+    has_password: bool = False
+    fingerprint: str | None = None
+    version: str = ""
+    form_factor: str = ""
+    is_fips: bool = False
+    is_sky: bool = False
+    # transport name -> {application name: enabled}; only transports the key supports
+    applications: dict[str, dict[str, bool]] | None = None
+
+
+@dataclass
+class DeviceSummary:
+    fingerprint: str
+    name: str
+    serial: int | None
+
+    @property
+    def label(self) -> str:
+        return f"{self.name} · {self.serial}" if self.serial else self.name
 
 
 class BackendError(Exception):
@@ -61,6 +82,7 @@ class Backend:
       on_code(Credential, Code)
       on_error(str)
       on_service(bool)   -- False when pcscd is not reachable
+      on_devices(list[DeviceSummary], active_fingerprint | None)
     """
 
     POLL_INTERVAL = 1.0
@@ -71,6 +93,7 @@ class Backend:
         self.on_code: Callable[[Credential, Code], None] = lambda c, k: None
         self.on_error: Callable[[str], None] = lambda m: None
         self.on_service: Callable[[bool], None] = lambda ok: None
+        self.on_devices: Callable[[list, str | None], None] = lambda d, a: None
 
         self._queue: queue.Queue[Callable[[], None]] = queue.Queue()
         self._device = None
@@ -78,6 +101,8 @@ class Backend:
         self._key: bytes | None = None
         self._state: DeviceState | None = None
         self._service_ok: bool | None = None
+        self._selected_fp: str | None = None
+        self._all_fps: tuple = ()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="yubikey", daemon=True)
 
@@ -112,6 +137,22 @@ class Backend:
     def delete(self, cred: Credential) -> None:
         self._queue.put(lambda: self._delete(cred))
 
+    def select_device(self, fingerprint: str) -> None:
+        def job():
+            self._selected_fp = fingerprint
+            self._poll(force=True)
+
+        self._queue.put(job)
+
+    def set_password(self, password: str, remember: bool, done: Callable[[str | None], None]) -> None:
+        self._queue.put(lambda: self._set_password(password, remember, done))
+
+    def remove_password(self, done: Callable[[str | None], None]) -> None:
+        self._queue.put(lambda: self._remove_password(done))
+
+    def reset_oath(self, done: Callable[[str | None], None]) -> None:
+        self._queue.put(lambda: self._reset_oath(done))
+
     @property
     def state(self) -> DeviceState | None:
         return self._state
@@ -137,7 +178,7 @@ class Backend:
     def _emit(self, cb, *args) -> None:
         """Dispatch to the main loop. Callbacks are resolved by attribute name at
         dispatch time so a handler assigned after the thread started still runs."""
-        name = next((n for n in ("on_device", "on_accounts", "on_code", "on_error", "on_service")
+        name = next((n for n in ("on_device", "on_accounts", "on_code", "on_error", "on_service", "on_devices")
                      if getattr(self, n) is cb), None)
         if name:
             GLib.idle_add(lambda: (getattr(self, name)(*args), False)[1])
@@ -149,19 +190,29 @@ class Backend:
         if ok != self._service_ok:
             self._service_ok = ok
             self._emit(self.on_service, ok)
-        if not ok:
-            devices = []
-        else:
+        devices = []
+        if ok:
             try:
                 devices = list_all_devices([SmartCardConnection])
             except Exception as e:  # noqa: BLE001
                 log.debug("list_all_devices failed: %s", e)
-                devices = []
-        if devices:
-            dev, info = devices[0]
-            fp = dev.fingerprint
-        else:
-            dev, info, fp = None, None, None
+        summaries = [DeviceSummary(d.fingerprint, _device_name(d, i), i.serial) for d, i in devices]
+        fps = tuple(x.fingerprint for x in summaries)
+
+        # Pick the active key: explicit selection, else last used serial, else first.
+        chosen = None
+        if self._selected_fp in fps:
+            chosen = self._selected_fp
+        elif fps:
+            last = config.get("last_serial")
+            chosen = next((x.fingerprint for x in summaries if last and x.serial == last), fps[0])
+        if fps != self._all_fps or chosen != self._selected_fp:
+            self._all_fps = fps
+            self._selected_fp = chosen
+            self._emit(self.on_devices, summaries, chosen)
+
+        fp = chosen
+        dev, info = next(((d, i) for d, i in devices if d.fingerprint == fp), (None, None))
         if dev is None and ok and _yubikey_busy():
             fp = "busy"
         log.debug("poll: service=%s devices=%d fp=%r prev=%r", ok, len(devices), fp, self._fingerprint)
@@ -181,14 +232,18 @@ class Backend:
             self._state = None
             self._emit(self.on_device, None)
             return
-        name = "YubiKey"
-        try:
-            from ykman.scripting import get_name  # noqa: PLC0415
-
-            name = get_name(info, dev.pid.yubikey_type if dev.pid else None)
-        except Exception:  # noqa: BLE001
-            pass
-        self._state = DeviceState(name=name, serial=info.serial)
+        if info.serial:
+            config.set("last_serial", info.serial)
+        self._state = DeviceState(
+            name=_device_name(dev, info),
+            serial=info.serial,
+            fingerprint=dev.fingerprint,
+            version=str(info.version),
+            form_factor=_FORM_FACTORS.get(info.form_factor, "Unknown"),
+            is_fips=bool(info.is_fips),
+            is_sky=bool(info.is_sky),
+            applications=_applications(info),
+        )
         self._emit(self.on_device, self._state)
         self._refresh()
 
@@ -280,6 +335,63 @@ class Backend:
             return
         self._refresh()
 
+    def _set_password(self, password: str, remember: bool, done) -> None:
+        try:
+            with self._session() as s:
+                key = s.derive_key(password)
+                s.set_key(key)
+                self._key = key
+                if remember or _lookup_key(s.device_id) is not None:
+                    _store_key(s.device_id, key)
+                else:
+                    _clear_key(s.device_id)
+        except _Locked:
+            self._emit(done, "YubiKey is locked")
+            return
+        except Exception as e:  # noqa: BLE001
+            self._emit(done, self._describe(e))
+            return
+        self._state.has_password = True
+        self._emit(self.on_device, self._state)
+        self._emit(done, None)
+
+    def _remove_password(self, done) -> None:
+        try:
+            with self._session() as s:
+                s.unset_key()
+                _clear_key(s.device_id)
+                self._key = None
+        except _Locked:
+            self._emit(done, "YubiKey is locked")
+            return
+        except Exception as e:  # noqa: BLE001
+            self._emit(done, self._describe(e))
+            return
+        self._state.has_password = False
+        self._emit(self.on_device, self._state)
+        self._emit(done, None)
+
+    def _reset_oath(self, done) -> None:
+        """Wipes the OATH applet. Needs no password, so bypass the auth wrapper."""
+        if self._device is None:
+            self._emit(done, "No YubiKey connected")
+            return
+        try:
+            with self._device.open_connection(SmartCardConnection) as conn:
+                s = OathSession(conn)
+                device_id = s.device_id
+                s.reset()
+            _clear_key(device_id)
+            self._key = None
+        except Exception as e:  # noqa: BLE001
+            self._emit(done, self._describe(e))
+            return
+        self._state.has_password = False
+        self._state.locked = False
+        self._emit(self.on_device, self._state)
+        self._emit(done, None)
+        self._refresh()
+
     def _set_locked(self, device_id: str, bad: bool = False) -> None:
         if self._state is None:
             return
@@ -337,6 +449,7 @@ class _SessionCtx:
                 self.b._key = key
             if self.b._state is not None:
                 self.b._state.device_id = s.device_id
+                self.b._state.has_password = bool(s.has_key)
             return s
         except BaseException:
             self.conn.__exit__(None, None, None)
@@ -344,6 +457,46 @@ class _SessionCtx:
 
     def __exit__(self, *exc) -> None:
         self.conn.__exit__(*exc)
+
+
+_FORM_FACTORS = {
+    FORM_FACTOR.USB_A_KEYCHAIN: "USB-A Keychain",
+    FORM_FACTOR.USB_A_NANO: "USB-A Nano",
+    FORM_FACTOR.USB_C_KEYCHAIN: "USB-C Keychain",
+    FORM_FACTOR.USB_C_NANO: "USB-C Nano",
+    FORM_FACTOR.USB_C_LIGHTNING: "USB-C / Lightning",
+    FORM_FACTOR.USB_A_BIO: "USB-A Bio",
+    FORM_FACTOR.USB_C_BIO: "USB-C Bio",
+}
+_APP_NAMES = [
+    (CAPABILITY.OTP, "Yubico OTP"),
+    (CAPABILITY.U2F, "FIDO U2F"),
+    (CAPABILITY.FIDO2, "FIDO2"),
+    (CAPABILITY.OATH, "OATH"),
+    (CAPABILITY.PIV, "PIV"),
+    (CAPABILITY.OPENPGP, "OpenPGP"),
+    (CAPABILITY.HSMAUTH, "YubiHSM Auth"),
+]
+
+
+def _device_name(dev, info) -> str:
+    try:
+        from ykman.scripting import get_name  # noqa: PLC0415
+
+        return get_name(info, dev.pid.yubikey_type if dev.pid else None)
+    except Exception:  # noqa: BLE001
+        return "YubiKey"
+
+
+def _applications(info) -> dict[str, dict[str, bool]]:
+    out: dict[str, dict[str, bool]] = {}
+    for transport in (TRANSPORT.USB, TRANSPORT.NFC):
+        supported = info.supported_capabilities.get(transport, 0)
+        if not supported:
+            continue
+        enabled = info.config.enabled_capabilities.get(transport, 0)
+        out[transport.name] = {name: bool(enabled & cap) for cap, name in _APP_NAMES if supported & cap}
+    return out
 
 
 def _pcsc_available() -> bool:

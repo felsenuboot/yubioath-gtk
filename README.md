@@ -5,9 +5,13 @@ window. A Linux-native replacement for the OTP part of Yubico Authenticator.
 
 - Lists the accounts stored on the key, shows TOTP codes with a countdown ring
 - Click a row to copy the code; touch-required and HOTP accounts calculate on click
-- Password-protected keys: unlock once, optionally remember in the system keyring
+- Favorites pinned to the top; issuer logos from Aegis-format icon packs
+- Password-protected keys: unlock once, optionally remember in the system keyring;
+  set, change or remove the password; reset the OATH applet
 - Add accounts from an `otpauth://` URI, a QR code on screen (grim + zbarimg), or by hand
 - Rename and delete accounts, search with Ctrl+F
+- Device info page; switch between several connected keys
+- Preferences: theme override, hide codes until clicked, clear clipboard after a delay
 - Follows the system light/dark theme and accent colour
 
 Talks to the key directly through [yubikey-manager](https://github.com/Yubico/yubikey-manager)
@@ -43,7 +47,13 @@ yubioath-gtk
 Or run from the checkout without installing: `python -m yubioath_gtk`.
 
 Environment variables: `YUBIOATH_DEBUG=1` for verbose logging,
-`YUBIOATH_FAKE=1` to run with fake accounts and no hardware (UI development).
+`YUBIOATH_FAKE=1` to run with fake accounts and no hardware (UI development);
+add `YUBIOATH_OPEN=<action>` (e.g. `preferences`, `device-info`, `password`) to
+open a dialog on launch.
+
+Icon packs: download the `.zip` from
+[aegis-icons releases](https://github.com/aegis-icons/aegis-icons/releases) and
+pick it in Preferences.
 
 ## Hyprland
 
@@ -68,6 +78,8 @@ Add `pin = true` if it should stay visible on every workspace.
 |---|---|
 | Ctrl+F | Search; Enter copies the first match |
 | Ctrl+N | Add account |
+| Ctrl+I | Device info |
+| Ctrl+, | Preferences |
 | F5 / Ctrl+R | Refresh |
 | Ctrl+Q / Ctrl+W | Quit |
 

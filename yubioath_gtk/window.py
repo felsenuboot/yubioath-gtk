@@ -6,13 +6,14 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from yubikit.oath import OATH_TYPE, Code, Credential, CredentialData  # noqa: E402
 
 from .add_dialog import AddAccountDialog  # noqa: E402
 from .backend import Backend, DeviceState  # noqa: E402
 from .config import config  # noqa: E402
+from .dialogs import DeviceInfoDialog, PasswordDialog  # noqa: E402
 from .icons import load_pack  # noqa: E402
 from .prefs import PreferencesDialog  # noqa: E402
 from .widgets import AccountRow  # noqa: E402
@@ -39,6 +40,7 @@ class MainWindow(Adw.ApplicationWindow):
         backend.on_code = self._on_code
         backend.on_error = self._on_error
         backend.on_service = self._on_service
+        backend.on_devices = self._on_devices
 
         self.toasts = Adw.ToastOverlay()
         view = Adw.ToolbarView()
@@ -53,6 +55,9 @@ class MainWindow(Adw.ApplicationWindow):
         header.pack_start(self.search_btn)
         menu = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=self._menu_model())
         header.pack_end(menu)
+        self.device_btn = Gtk.MenuButton(icon_name="drive-removable-media-symbolic", tooltip_text="Switch YubiKey")
+        self.device_btn.set_visible(False)
+        header.pack_start(self.device_btn)
         add_btn = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add account (Ctrl+N)")
         add_btn.set_action_name("win.add")
         header.pack_end(add_btn)
@@ -91,24 +96,35 @@ class MainWindow(Adw.ApplicationWindow):
         self._add_action("search", lambda *_: self.search_bar.set_search_mode(True), ["<Control>f"])
         self._add_action("close", lambda *_: self.close(), ["<Control>w", "<Control>q"])
         self._add_action("preferences", lambda *_: PreferencesDialog(self._pref_changed).present(self), ["<Control>comma"])
+        self._add_action("device-info", lambda *_: self._show_device_info(), ["<Control>i"])
+        self._add_action("password", lambda *_: self._show_password_dialog())
+        self._add_action("reset-oath", lambda *_: self._confirm_reset())
+        self.device_action = Gio.SimpleAction.new_stateful("device", GLib.VariantType.new("s"), GLib.Variant("s", ""))
+        self.device_action.connect("activate", self._device_chosen)
+        self.add_action(self.device_action)
+        for name in ("device-info", "password", "reset-oath"):
+            self.lookup_action(name).set_enabled(False)
 
         GLib.timeout_add(250, self._tick)
 
     # -- construction --------------------------------------------------------
 
     def _menu_model(self):
-        from gi.repository import Gio
-
         m = Gio.Menu()
-        m.append("Refresh", "win.refresh")
-        m.append("Forget saved password", "win.forget-password")
-        m.append("Preferences", "win.preferences")
-        m.append("About YubiOath", "app.about")
+        key = Gio.Menu()
+        key.append("Device info", "win.device-info")
+        key.append("Set or change password…", "win.password")
+        key.append("Forget saved password", "win.forget-password")
+        key.append("Reset OATH…", "win.reset-oath")
+        m.append_section(None, key)
+        rest = Gio.Menu()
+        rest.append("Refresh", "win.refresh")
+        rest.append("Preferences", "win.preferences")
+        rest.append("About YubiOath", "app.about")
+        m.append_section(None, rest)
         return m
 
     def _add_action(self, name, cb, accels=None):
-        from gi.repository import Gio
-
         a = Gio.SimpleAction.new(name, None)
         a.connect("activate", cb)
         self.add_action(a)
@@ -213,8 +229,25 @@ class MainWindow(Adw.ApplicationWindow):
         elif self.backend.state is None:
             self.stack.set_visible_child_name("no-key")
 
+    def _on_devices(self, devices, active: str | None) -> None:
+        menu = Gio.Menu()
+        for d in devices:
+            item = Gio.MenuItem.new(d.label, None)
+            item.set_action_and_target_value("win.device", GLib.Variant("s", d.fingerprint))
+            menu.append_item(item)
+        self.device_btn.set_menu_model(menu)
+        self.device_btn.set_visible(len(devices) > 1)
+        self.device_action.set_state(GLib.Variant("s", active or ""))
+
+    def _device_chosen(self, action, value) -> None:
+        action.set_state(value)
+        self.backend.select_device(value.get_string())
+
     def _on_device(self, state: DeviceState | None) -> None:
         log.debug("on_device: %r", state)
+        usable = state is not None and not state.busy
+        for name in ("device-info", "password", "reset-oath"):
+            self.lookup_action(name).set_enabled(usable)
         if state is None:
             self.title_widget.set_subtitle("")
             self._clear_rows()
@@ -442,6 +475,41 @@ class MainWindow(Adw.ApplicationWindow):
         self.unlock_btn.set_sensitive(False)
         self.password_row.set_sensitive(False)
         self.backend.unlock(pw, self.remember_row.get_active())
+
+    def _show_device_info(self) -> None:
+        if self.backend.state is not None:
+            DeviceInfoDialog(self.backend.state).present(self)
+
+    def _show_password_dialog(self) -> None:
+        state = self.backend.state
+        if state is None:
+            return
+
+        def on_set(pw, remember, done):
+            self.backend.set_password(pw, remember, lambda err: (done(err), err or self._toast("Password saved", 2)))
+
+        def on_remove(done):
+            self.backend.remove_password(lambda err: (done(err), err or self._toast("Password removed", 2)))
+
+        PasswordDialog(state.has_password, on_set, on_remove).present(self)
+
+    def _confirm_reset(self) -> None:
+        dlg = Adw.AlertDialog(
+            heading="Reset OATH?",
+            body="All accounts stored on this YubiKey and its OATH password will be erased. "
+            "This cannot be undone and the accounts cannot be recovered.",
+        )
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("reset", "Erase everything")
+        dlg.set_response_appearance("reset", Adw.ResponseAppearance.DESTRUCTIVE)
+        dlg.set_default_response("cancel")
+
+        def done(_d, resp):
+            if resp == "reset":
+                self.backend.reset_oath(lambda err: self._toast(err or "OATH reset", 3))
+
+        dlg.connect("response", done)
+        dlg.present(self)
 
     def _show_add_dialog(self) -> None:
         if self.backend.state is None:

@@ -53,6 +53,9 @@ class YubiOathApp(Adw.Application):
         if self.window is None:
             self.window = MainWindow(self, self.backend)
             self.backend.start()
+            # Dev aid: YUBIOATH_FAKE=1 YUBIOATH_OPEN=<win action> opens a dialog on launch.
+            if os.environ.get("YUBIOATH_FAKE") and os.environ.get("YUBIOATH_OPEN"):
+                GLib.timeout_add(1200, lambda: (self.window.activate_action("win." + os.environ["YUBIOATH_OPEN"], None), False)[1])
         self.window.present()
 
     def do_shutdown(self) -> None:

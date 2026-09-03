@@ -11,7 +11,7 @@ from gi.repository import GLib
 
 from yubikit.oath import OATH_TYPE, Code, Credential
 
-from .backend import Backend, DeviceState
+from .backend import Backend, DeviceState, DeviceSummary
 
 _SEED = [
     ("GitHub", "alice@example.org", False, OATH_TYPE.TOTP),
@@ -39,8 +39,17 @@ class FakeBackend(Backend):
         self._counter = 0
 
     def start(self) -> None:
-        self._state = DeviceState(name="YubiKey 5C NFC", serial=12345678)
-        GLib.timeout_add(600, lambda: (self.on_service(True), self.on_device(self._state), self.refresh(), False)[-1])
+        self._state = DeviceState(
+            name="YubiKey 5C NFC", serial=12345678, fingerprint="fake1", version="5.7.1",
+            form_factor="USB-C Keychain", has_password=True,
+            applications={
+                "USB": {"Yubico OTP": True, "FIDO U2F": True, "FIDO2": True, "OATH": True, "PIV": True, "OpenPGP": False},
+                "NFC": {"Yubico OTP": True, "FIDO U2F": True, "FIDO2": True, "OATH": True, "PIV": False, "OpenPGP": False},
+            },
+        )
+        devices = [DeviceSummary("fake1", "YubiKey 5C NFC", 12345678), DeviceSummary("fake2", "YubiKey 5 Nano", 87654321)]
+        GLib.timeout_add(600, lambda: (self.on_service(True), self.on_devices(devices, "fake1"),
+                                       self.on_device(self._state), self.refresh(), False)[-1])
 
     def stop(self) -> None:
         pass
@@ -87,3 +96,19 @@ class FakeBackend(Backend):
     def delete(self, cred) -> None:
         self._creds.remove(cred)
         self.refresh()
+
+    def select_device(self, fingerprint: str) -> None:
+        GLib.idle_add(lambda: (self.on_error(f"Selected {fingerprint}"), False)[1])
+
+    def set_password(self, password, remember, done) -> None:
+        self._state.has_password = True
+        GLib.timeout_add(300, lambda: (self.on_device(self._state), done(None), False)[-1])
+
+    def remove_password(self, done) -> None:
+        self._state.has_password = False
+        GLib.timeout_add(300, lambda: (self.on_device(self._state), done(None), False)[-1])
+
+    def reset_oath(self, done) -> None:
+        self._creds.clear()
+        self._state.has_password = False
+        GLib.timeout_add(300, lambda: (self.on_device(self._state), done(None), self.refresh(), False)[-1])
