@@ -13,6 +13,17 @@ window. A Linux-native replacement for the OTP part of Yubico Authenticator.
 Talks to the key directly through [yubikey-manager](https://github.com/Yubico/yubikey-manager)
 (`yubikit`) over PC/SC. No background service of its own.
 
+> **Status and disclaimer.** This is a personal project, written largely with
+> Claude Code and reviewed by a human, but not audited. It works on my machine
+> (Arch, Hyprland, YubiKey 5). Use at your own risk; there is no warranty.
+> Issues and pull requests are welcome.
+
+**Security notes.** The app never sees or stores your OTP secrets; they stay on
+the YubiKey, which computes every code. The only thing it can persist is the
+key derived from your OATH password, and only if you tick "Remember on this
+computer", in which case it goes to the system keyring via libsecret. The app
+holds the smart card connection only for the duration of each operation.
+
 ## Requirements (Arch)
 
 ```sh
