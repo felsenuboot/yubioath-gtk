@@ -3,6 +3,11 @@
 OATH one-time passwords (TOTP/HOTP) from a YubiKey, in a small GTK4 + libadwaita
 window. A Linux-native replacement for the OTP part of Yubico Authenticator.
 
+<p align="center">
+  <img src="data/screenshots/dark.png" width="360" alt="YubiOath, dark theme">
+  <img src="data/screenshots/light.png" width="360" alt="YubiOath, light theme">
+</p>
+
 - Lists the accounts stored on the key, shows TOTP codes with a countdown ring
 - Click a row to copy the code; touch-required and HOTP accounts calculate on click
 - Favorites pinned to the top; issuer logos from Aegis-format icon packs
