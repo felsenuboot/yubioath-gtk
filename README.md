@@ -1,4 +1,4 @@
-# YubiOath
+# <img src="data/io.github.felsenuboot.YubiOath.svg" width="40" align="top" alt=""> YubiOath
 
 OATH one-time passwords (TOTP/HOTP) from a YubiKey, in a small GTK4 + libadwaita
 window. A Linux-native replacement for the OTP part of Yubico Authenticator.
