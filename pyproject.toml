@@ -17,7 +17,7 @@ build-backend = "setuptools.build_meta"
 packages = ["yubioath_gtk"]
 
 [tool.setuptools.package-data]
-yubioath_gtk = ["style.css", "icons/**/*.svg"]
+yubioath_gtk = ["*.css", "icons/**/*.svg"]
 
 [tool.ruff]
 line-length = 110

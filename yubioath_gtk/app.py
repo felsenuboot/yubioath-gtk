@@ -62,13 +62,27 @@ class YubiOathApp(Adw.Application):
         self.backend.stop()
         Adw.Application.do_shutdown(self)
 
-    @staticmethod
-    def _apply_theme(theme: str) -> None:
+    _palette_provider: Gtk.CssProvider | None = None
+
+    def _apply_theme(self, theme: str) -> None:
         scheme = {
             "light": Adw.ColorScheme.FORCE_LIGHT,
             "dark": Adw.ColorScheme.FORCE_DARK,
         }.get(theme, Adw.ColorScheme.DEFAULT)
         Adw.StyleManager.get_default().set_color_scheme(scheme)
+        # A forced theme also re-declares the stock palette above USER priority,
+        # so wallpaper colour tools writing ~/.config/gtk-4.0/gtk.css cannot
+        # repaint it. "system" keeps whatever the user has configured.
+        display = Gdk.Display.get_default()
+        if self._palette_provider is not None:
+            Gtk.StyleContext.remove_provider_for_display(display, self._palette_provider)
+            self._palette_provider = None
+        if theme in ("light", "dark"):
+            self._palette_provider = Gtk.CssProvider()
+            self._palette_provider.load_from_path(os.path.join(HERE, f"palette-{theme}.css"))
+            Gtk.StyleContext.add_provider_for_display(
+                display, self._palette_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1
+            )
 
     def _about(self, *_) -> None:
         dlg = Adw.AboutDialog(

@@ -23,7 +23,11 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self.add(page)
 
         g = Adw.PreferencesGroup(title="Appearance")
-        theme = Adw.ComboRow(title="Theme", model=Gtk.StringList.new(["Follow system", "Light", "Dark"]))
+        theme = Adw.ComboRow(
+            title="Theme",
+            subtitle="Light and Dark use the stock Adwaita palette and ignore gtk.css colour overrides",
+            model=Gtk.StringList.new(["Follow system", "Light", "Dark"]),
+        )
         theme.set_selected(THEMES.index(config.get("theme")) if config.get("theme") in THEMES else 0)
         theme.connect("notify::selected", lambda r, _p: self._set("theme", THEMES[r.get_selected()]))
         g.add(theme)
