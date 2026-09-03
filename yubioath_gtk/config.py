@@ -19,6 +19,9 @@ DEFAULTS: dict[str, Any] = {
     "icon_pack": None,  # path to an Aegis icon pack zip
     "favorites": {},  # device_id -> [credential id hex, ...]
     "last_serial": None,
+    "tray_icon": True,  # StatusNotifierItem in the bar
+    "close_to_tray": False,  # closing the window keeps the app running
+    "start_hidden": False,  # launch with only the tray icon
 }
 
 

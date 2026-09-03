@@ -6,7 +6,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GObject, Gtk  # noqa: E402
 
 from .config import config  # noqa: E402
 
@@ -63,6 +63,26 @@ class PreferencesDialog(Adw.PreferencesDialog):
         clear.set_value(int(config.get("clipboard_clear") or 0))
         clear.connect("notify::value", lambda r, _p: self._set("clipboard_clear", int(r.get_value())))
         g.add(clear)
+        page.add(g)
+
+        g = Adw.PreferencesGroup(title="Tray icon")
+        tray = Adw.SwitchRow(title="Show tray icon", subtitle="Accounts in a menu; click one to copy its code")
+        tray.set_active(bool(config.get("tray_icon")))
+        g.add(tray)
+        close = Adw.SwitchRow(
+            title="Close to tray",
+            subtitle="Closing the window keeps YubiOath running; quit from the tray menu or with Ctrl+Q",
+        )
+        close.set_active(bool(config.get("close_to_tray")))
+        close.connect("notify::active", lambda r, _p: self._set("close_to_tray", r.get_active()))
+        g.add(close)
+        hidden = Adw.SwitchRow(title="Start hidden", subtitle="Show only the tray icon at launch")
+        hidden.set_active(bool(config.get("start_hidden")))
+        hidden.connect("notify::active", lambda r, _p: self._set("start_hidden", r.get_active()))
+        g.add(hidden)
+        for row in (close, hidden):
+            tray.bind_property("active", row, "sensitive", GObject.BindingFlags.SYNC_CREATE)
+        tray.connect("notify::active", lambda r, _p: self._set("tray_icon", r.get_active()))
         page.add(g)
 
         self._update_pack_row()

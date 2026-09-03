@@ -12,6 +12,8 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from . import APP_ID, APP_NAME, VERSION  # noqa: E402
 from .backend import Backend  # noqa: E402
+from .config import config  # noqa: E402
+from .tray import TrayIcon  # noqa: E402
 from .window import MainWindow  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +33,9 @@ class YubiOathApp(Adw.Application):
         else:
             self.backend = Backend()
         self.window: MainWindow | None = None
+        self.tray: TrayIcon | None = None
+        self._activation_token: str | None = None
+        self._notify_source: int | None = None
 
     def do_startup(self) -> None:
         Adw.Application.do_startup(self)
@@ -42,25 +47,80 @@ class YubiOathApp(Adw.Application):
         Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(
             os.path.join(HERE, "icons")
         )
-        from .config import config  # noqa: PLC0415
-
         self._apply_theme(config.get("theme"))
         about = Gio.SimpleAction.new("about", None)
         about.connect("activate", self._about)
         self.add_action(about)
+        quit_action = Gio.SimpleAction.new("quit", None)
+        quit_action.connect("activate", lambda *_: self.quit())
+        self.add_action(quit_action)
+        self.set_accels_for_action("app.quit", ["<Control>q"])
 
     def do_activate(self) -> None:
-        if self.window is None:
-            self.window = MainWindow(self, self.backend)
-            self.backend.start()
-            # Dev aid: YUBIOATH_FAKE=1 YUBIOATH_OPEN=<win action> opens a dialog on launch.
-            if os.environ.get("YUBIOATH_FAKE") and os.environ.get("YUBIOATH_OPEN"):
-                GLib.timeout_add(1200, lambda: (self.window.activate_action("win." + os.environ["YUBIOATH_OPEN"], None), False)[1])
-        self.window.present()
+        if self.window is not None:  # second launch while running: just raise
+            self.show_window()
+            return
+        self.window = MainWindow(self, self.backend)
+        self.window.connect("accounts-changed", self._tray_refresh)
+        self.backend.start()
+        tray = bool(config.get("tray_icon"))
+        self.set_tray_enabled(tray)
+        # Dev aid: YUBIOATH_FAKE=1 YUBIOATH_OPEN=<win action> opens a dialog on launch.
+        if os.environ.get("YUBIOATH_FAKE") and os.environ.get("YUBIOATH_OPEN"):
+            GLib.timeout_add(1200, lambda: (self.window.activate_action("win." + os.environ["YUBIOATH_OPEN"], None), False)[1])
+        if not (tray and config.get("start_hidden")):
+            self.window.present()
 
     def do_shutdown(self) -> None:
+        self.set_tray_enabled(False)
         self.backend.stop()
         Adw.Application.do_shutdown(self)
+
+    # -- tray ----------------------------------------------------------------
+
+    def set_tray_enabled(self, on: bool) -> None:
+        if on and self.tray is None:
+            self.tray = TrayIcon(self.window.tray_menu, self.toggle_window, self._got_activation_token)
+            self.tray.start()
+        elif not on and self.tray is not None:
+            self.tray.stop()
+            self.tray = None
+
+    def _tray_refresh(self, *_) -> None:
+        if self.tray is not None:
+            self.tray.refresh(self.window.tray_tooltip())
+
+    def _got_activation_token(self, token: str) -> None:
+        self._activation_token = token
+
+    def show_window(self) -> None:
+        if self._activation_token:  # lets the compositor focus us without user input on our surface
+            self.window.set_startup_id(self._activation_token)
+            self._activation_token = None
+        self.window.present()
+
+    def hide_window(self) -> None:
+        self.window.set_visible(False)
+
+    def toggle_window(self) -> None:
+        if self.window.is_active():
+            self.hide_window()
+        else:
+            self.show_window()
+
+    def notify(self, msg: str, timeout: int = 4) -> None:
+        """Desktop notification for feedback the window cannot show right now."""
+        n = Gio.Notification.new(msg)
+        n.set_icon(Gio.ThemedIcon.new(APP_ID))
+        self.send_notification("status", n)
+        if self._notify_source:
+            GLib.source_remove(self._notify_source)
+        self._notify_source = GLib.timeout_add_seconds(timeout, self._withdraw_notification)
+
+    def _withdraw_notification(self) -> bool:
+        self._notify_source = None
+        self.withdraw_notification("status")
+        return False
 
     _palette_provider: Gtk.CssProvider | None = None
 

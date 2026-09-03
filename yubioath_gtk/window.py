@@ -6,16 +6,18 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, GObject, Gtk  # noqa: E402
 
 from yubikit.oath import OATH_TYPE, Code, Credential, CredentialData  # noqa: E402
 
 from .add_dialog import AddAccountDialog  # noqa: E402
 from .backend import Backend, DeviceState  # noqa: E402
+from .clipboard import Clipboard  # noqa: E402
 from .config import config  # noqa: E402
 from .dialogs import DeviceInfoDialog, PasswordDialog  # noqa: E402
 from .icons import load_pack  # noqa: E402
 from .prefs import PreferencesDialog  # noqa: E402
+from .tray import MenuItem  # noqa: E402
 from .widgets import AccountRow  # noqa: E402
 
 import logging  # noqa: E402
@@ -24,6 +26,11 @@ log = logging.getLogger(__name__)
 
 
 class MainWindow(Adw.ApplicationWindow):
+    __gsignals__ = {
+        # Anything the tray menu shows has changed: accounts, device, visibility.
+        "accounts-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
+    }
+
     def __init__(self, app: Adw.Application, backend: Backend) -> None:
         super().__init__(application=app, title="YubiOath")
         self.set_default_size(400, 620)
@@ -31,9 +38,12 @@ class MainWindow(Adw.ApplicationWindow):
         self.backend = backend
         self.rows: dict[bytes, AccountRow] = {}
         self._refresh_source: int | None = None
-        self._clip_source: int | None = None
         self._creds: list[Credential] = []
+        self._png_cache: dict[int, bytes] = {}
         self.icon_pack = load_pack(config.get("icon_pack"))
+        self.clipboard = Clipboard()
+        self._apply_tray_prefs()
+        self.connect("notify::visible", self._visible_changed)
 
         backend.on_device = self._on_device
         backend.on_accounts = self._on_accounts
@@ -94,7 +104,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._add_action("refresh", lambda *_: self.backend.refresh(), ["F5", "<Control>r"])
         self._add_action("forget-password", lambda *_: self.backend.forget_password())
         self._add_action("search", lambda *_: self.search_bar.set_search_mode(True), ["<Control>f"])
-        self._add_action("close", lambda *_: self.close(), ["<Control>w", "<Control>q"])
+        self._add_action("close", lambda *_: self.close(), ["<Control>w"])
         self._add_action("preferences", lambda *_: PreferencesDialog(self._pref_changed).present(self), ["<Control>comma"])
         self._add_action("device-info", lambda *_: self._show_device_info(), ["<Control>i"])
         self._add_action("password", lambda *_: self._show_password_dialog())
@@ -228,6 +238,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.stack.set_visible_child_name("no-service")
         elif self.backend.state is None:
             self.stack.set_visible_child_name("no-key")
+        self._changed()
 
     def _on_devices(self, devices, active: str | None) -> None:
         menu = Gio.Menu()
@@ -245,6 +256,10 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_device(self, state: DeviceState | None) -> None:
         log.debug("on_device: %r", state)
+        self._update_device(state)
+        self._changed()
+
+    def _update_device(self, state: DeviceState | None) -> None:
         usable = state is not None and not state.busy
         for name in ("device-info", "password", "reset-oath"):
             self.lookup_action(name).set_enabled(usable)
@@ -307,6 +322,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.stack.set_visible_child_name("list" if creds else "empty")
         self.listbox.invalidate_filter()
         self._schedule_refresh(codes.values())
+        self._changed()
 
     def _on_code(self, cred: Credential, code: Code) -> None:
         row = self.rows.get(cred.id)
@@ -338,6 +354,7 @@ class MainWindow(Adw.ApplicationWindow):
             if row is not None and row.get_index() != i:
                 self.listbox.remove(row)
                 self.listbox.insert(row, i)
+        self._changed()
 
     def _row_favorite(self, row: AccountRow) -> None:
         config.set_favorite(row.cred.device_id, row.cred.id, not row.favorite)
@@ -353,9 +370,18 @@ class MainWindow(Adw.ApplicationWindow):
                 self._toast("Could not load icon pack")
             for row in self.rows.values():
                 self._decorate(row)
+            self._png_cache.clear()
+            self._changed()
         elif key == "hide_codes":
             for row in self.rows.values():
                 row.set_hide_codes(bool(config.get("hide_codes")))
+        elif key in ("tray_icon", "close_to_tray"):
+            self._apply_tray_prefs()
+            if key == "tray_icon":
+                self.get_application().set_tray_enabled(bool(config.get("tray_icon")))
+
+    def _apply_tray_prefs(self) -> None:
+        self.set_hide_on_close(bool(config.get("tray_icon")) and bool(config.get("close_to_tray")))
 
     def _on_error(self, msg: str) -> None:
         for row in self.rows.values():
@@ -379,9 +405,16 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _do_scheduled_refresh(self) -> bool:
         self._refresh_source = None
-        if self.stack.get_visible_child_name() == "list":
+        # A hidden window (closed to tray) does not poll the key; the tray
+        # calculates on click and _visible_changed catches up on show.
+        if self.stack.get_visible_child_name() == "list" and self.is_visible():
             self.backend.refresh()
         return False
+
+    def _visible_changed(self, *_) -> None:
+        if self.is_visible() and self.stack.get_visible_child_name() == "list" and self._refresh_source is None:
+            self.backend.refresh()
+        self._changed()
 
     def _tick(self) -> bool:
         now = time.time()
@@ -405,25 +438,12 @@ class MainWindow(Adw.ApplicationWindow):
             self._copy(row)
 
     def _copy(self, row: AccountRow) -> None:
-        clipboard = Gdk.Display.get_default().get_clipboard()
-        clipboard.set(row.code.value)
+        secs = int(config.get("clipboard_clear") or 0)
+        # Without focus (tray click) our Wayland input serial may be stale.
+        self.clipboard.copy(row.code.value, secs, external=not self.is_active())
         row.flash_copied()
         label = row.cred.issuer or row.cred.name
         self._toast(f"Code for {label} copied", 2)
-        if self._clip_source:
-            GLib.source_remove(self._clip_source)
-            self._clip_source = None
-        secs = int(config.get("clipboard_clear") or 0)
-        if secs > 0:
-            value = row.code.value
-
-            def clear() -> bool:
-                self._clip_source = None
-                if clipboard.is_local():  # still ours, nobody else copied since
-                    clipboard.read_text_async(None, lambda c, r: _clear_if(c, r, value))
-                return False
-
-            self._clip_source = GLib.timeout_add_seconds(secs, clear)
 
     def _row_calculate(self, row: AccountRow) -> None:
         if row._pending:
@@ -548,13 +568,70 @@ class MainWindow(Adw.ApplicationWindow):
         self.rows.clear()
 
     def _toast(self, msg: str, timeout: int = 4) -> None:
-        self.toasts.add_toast(Adw.Toast(title=msg, timeout=timeout))
+        if self.is_active():
+            self.toasts.add_toast(Adw.Toast(title=msg, timeout=timeout))
+        else:  # hidden or unfocused: a toast would go unseen
+            self.get_application().notify(msg, timeout)
 
+    def _changed(self) -> None:
+        self.emit("accounts-changed")
 
-def _clear_if(clipboard: Gdk.Clipboard, result, value: str) -> None:
-    try:
-        text = clipboard.read_text_finish(result)
-    except Exception:  # noqa: BLE001
-        return
-    if text == value:
-        clipboard.set("")
+    # -- tray ----------------------------------------------------------------
+
+    def tray_menu(self) -> list[MenuItem]:
+        app = self.get_application()
+        items: list[MenuItem] = []
+        state = self.backend.state
+        if not getattr(self, "_service_ok", True):
+            items.append(MenuItem("Smart card service not running", enabled=False))
+        elif state is None:
+            items.append(MenuItem("No YubiKey", enabled=False))
+        elif state.busy:
+            items.append(MenuItem("YubiKey is in use", enabled=False))
+        elif state.locked:
+            items.append(MenuItem("Unlock YubiKey…", app.show_window))
+        elif not self._creds:
+            items.append(MenuItem("No accounts", enabled=False))
+        else:
+            ordered = self._ordered(self._creds)
+            n_fav = sum(1 for c in ordered if self._is_fav(c))
+            for i, cred in enumerate(ordered):
+                if n_fav and i == n_fav:
+                    items.append(MenuItem(separator=True))
+                label = f"{cred.issuer} · {cred.name}" if cred.issuer else cred.name
+                if cred.touch_required:
+                    label += "  (touch)"
+                items.append(MenuItem(label, lambda c=cred: self.copy_code(c), icon_png=self._icon_png(cred)))
+        items.append(MenuItem(separator=True))
+        if self.is_visible():
+            items.append(MenuItem("Hide YubiOath", app.hide_window))
+        else:
+            items.append(MenuItem("Show YubiOath", app.show_window))
+        items.append(MenuItem("Quit", app.quit))
+        return items
+
+    def tray_tooltip(self) -> str:
+        state = self.backend.state
+        if state is None or state.busy:
+            return "No YubiKey"
+        return state.name + (f" · {state.serial}" if state.serial else "")
+
+    def copy_code(self, cred: Credential) -> None:
+        """Tray entry point: copy a current code, calculating first if needed."""
+        row = self.rows.get(cred.id)
+        if row is not None:
+            self._row_primary(row)
+
+    def _icon_png(self, cred: Credential) -> bytes | None:
+        if self.icon_pack is None:
+            return None
+        texture = self.icon_pack.lookup(cred.issuer, cred.name)
+        if texture is None:
+            return None
+        key = id(texture)
+        if key not in self._png_cache:
+            try:
+                self._png_cache[key] = texture.save_to_png_bytes().get_data()
+            except Exception:  # noqa: BLE001
+                self._png_cache[key] = b""
+        return self._png_cache[key] or None

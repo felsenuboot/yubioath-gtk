@@ -1,4 +1,4 @@
-# <img src="data/io.github.felsenuboot.YubiOath.svg" width="40" align="top" alt=""> YubiOath
+# <img src="yubioath_gtk/icons/hicolor/scalable/apps/io.github.felsenuboot.YubiOath.svg" width="40" align="top" alt=""> YubiOath
 
 OATH one-time passwords (TOTP/HOTP) from a YubiKey, in a small GTK4 + libadwaita
 window. A Linux-native replacement for the OTP part of Yubico Authenticator.
@@ -17,6 +17,8 @@ window. A Linux-native replacement for the OTP part of Yubico Authenticator.
 - Rename and delete accounts, search with Ctrl+F
 - Device info page; switch between several connected keys
 - Preferences: theme override, hide codes until clicked, clear clipboard after a delay
+- Tray icon with the accounts in a menu: click one to copy its code without
+  opening the window; optional close-to-tray and start hidden
 - Follows the system light/dark theme and accent colour
 
 Talks to the key directly through [yubikey-manager](https://github.com/Yubico/yubikey-manager)
@@ -41,6 +43,8 @@ sudo pacman -S --needed yubikey-manager ccid python-gobject gtk4 libadwaita libs
 sudo systemctl enable --now pcscd.socket
 # optional, for "Scan QR code on screen":
 sudo pacman -S --needed grim zbar
+# optional, for copying from the tray on sway and other wlroots compositors:
+sudo pacman -S --needed wl-clipboard
 ```
 
 ## Install / run
@@ -78,6 +82,29 @@ hl.window_rule({
 
 Add `pin = true` if it should stay visible on every workspace.
 
+## Tray icon
+
+GTK4 has no tray widget, so YubiOath implements the StatusNotifierItem and
+DBusMenu protocols itself. Any bar with a tray that speaks them shows the icon:
+waybar's `tray` module, Quickshell, KDE Plasma, and others. GNOME needs an
+AppIndicator extension.
+
+The menu lists your accounts, favorites first. Clicking one copies the current
+code; touch-required and HOTP accounts are calculated first. Feedback that would
+normally be a toast becomes a desktop notification while the window is hidden
+or unfocused, including the "Touch your YubiKey" prompt. A hidden window does
+not poll the key.
+
+Preferences has three switches: **Show tray icon**, **Close to tray** (the
+window hides instead of quitting; use the menu's Quit or Ctrl+Q) and **Start
+hidden**. If no tray host is running, the icon simply does not appear and a
+second launch brings the window back.
+
+Copies made from the tray go through `wl-copy` when it is installed, because
+compositors that validate the Wayland input serial (sway, other wlroots based
+ones) drop clipboard writes from an unfocused window. Hyprland accepts them
+either way.
+
 ## Keyboard
 
 | Shortcut | Action |
@@ -87,7 +114,8 @@ Add `pin = true` if it should stay visible on every workspace.
 | Ctrl+I | Device info |
 | Ctrl+, | Preferences |
 | F5 / Ctrl+R | Refresh |
-| Ctrl+Q / Ctrl+W | Quit |
+| Ctrl+W | Close the window (hides it when "Close to tray" is on) |
+| Ctrl+Q | Quit |
 
 ## License
 
