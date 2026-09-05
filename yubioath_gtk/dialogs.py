@@ -61,6 +61,7 @@ class PasswordDialog(Adw.Dialog):
         has_password: bool,
         on_set: Callable[[str, bool, Callable[[str | None], None]], None],
         on_remove: Callable[[Callable[[str | None], None]], None],
+        can_remember: bool = True,
     ) -> None:
         super().__init__(title="Change password" if has_password else "Set password", content_width=420)
         self._on_set = on_set
@@ -89,7 +90,8 @@ class PasswordDialog(Adw.Dialog):
         self.remember = Adw.SwitchRow(
             title="Remember on this computer", subtitle="Stored in the system keyring"
         )
-        self.remember.set_active(True)
+        self.remember.set_active(can_remember)
+        self.remember.set_visible(can_remember)
         for r in (self.pw, self.confirm):
             r.connect("changed", lambda *_: self._validate())
             g.add(r)

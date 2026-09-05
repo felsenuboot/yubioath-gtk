@@ -13,6 +13,7 @@ from gi.repository import GLib
 from yubikit.oath import OATH_TYPE, Code, Credential
 
 from .backend import Backend, DeviceState, DeviceSummary
+from .keystore import MemoryStore
 
 _SEED = [
     ("GitHub", "alice@example.org", False, OATH_TYPE.TOTP),
@@ -32,7 +33,7 @@ def _totp(key: bytes, counter: int) -> str:
 
 class FakeBackend(Backend):
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(keystore=MemoryStore())
         self._creds = [
             Credential("fake", f"{iss}:{name}".encode() if iss else name.encode(), iss, name, t, 30, touch)
             for iss, name, touch, t in _SEED
