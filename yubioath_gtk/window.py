@@ -39,6 +39,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.rows: dict[bytes, AccountRow] = {}
         self._refresh_source: int | None = None
         self._creds: list[Credential] = []
+        self._state: DeviceState | None = None  # last snapshot from the backend
+        self._service_ok = True
         self._png_cache: dict[int, bytes] = {}
         self.icon_pack = load_pack(config.get("icon_pack"))
         self.clipboard = Clipboard()
@@ -49,6 +51,7 @@ class MainWindow(Adw.ApplicationWindow):
         backend.on_accounts = self._on_accounts
         backend.on_code = self._on_code
         backend.on_error = self._on_error
+        backend.on_info = self._toast
         backend.on_service = self._on_service
         backend.on_devices = self._on_devices
 
@@ -246,7 +249,7 @@ class MainWindow(Adw.ApplicationWindow):
         if not ok:
             self._clear_rows()
             self.stack.set_visible_child_name("no-service")
-        elif self.backend.state is None:
+        elif self._state is None:
             self.stack.set_visible_child_name("no-key")
         self._changed()
 
@@ -266,6 +269,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_device(self, state: DeviceState | None) -> None:
         log.debug("on_device: %r", state)
+        self._state = state
         self._update_device(state)
         self._changed()
 
@@ -276,7 +280,7 @@ class MainWindow(Adw.ApplicationWindow):
         if state is None:
             self.title_widget.set_subtitle("")
             self._clear_rows()
-            if getattr(self, "_service_ok", True):
+            if self._service_ok:
                 self.stack.set_visible_child_name("no-key")
             return
         if state.busy:
@@ -289,9 +293,8 @@ class MainWindow(Adw.ApplicationWindow):
         if state.locked:
             self.unlock_btn.set_sensitive(True)
             self.password_row.set_sensitive(True)
-            if state.bad_password:
+            if state.auth_failure == "typed":
                 self.password_row.add_css_class("error")
-                self._toast("Wrong password")
             else:
                 self.password_row.remove_css_class("error")
             self.stack.set_visible_child_name("unlock")
@@ -510,11 +513,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.backend.unlock(pw, self.remember_row.get_active())
 
     def _show_device_info(self) -> None:
-        if self.backend.state is not None:
-            DeviceInfoDialog(self.backend.state).present(self)
+        if self._state is not None:
+            DeviceInfoDialog(self._state).present(self)
 
     def _show_password_dialog(self) -> None:
-        state = self.backend.state
+        state = self._state
         if state is None:
             return
 
@@ -547,7 +550,7 @@ class MainWindow(Adw.ApplicationWindow):
         dlg.present(self)
 
     def _show_add_dialog(self) -> None:
-        if self.backend.state is None:
+        if self._state is None:
             self._toast("Insert a YubiKey first")
             return
         dlg = AddAccountDialog(lambda data, touch: self._add(dlg, data, touch))
@@ -596,8 +599,8 @@ class MainWindow(Adw.ApplicationWindow):
     def tray_menu(self) -> list[MenuItem]:
         app = self.get_application()
         items: list[MenuItem] = []
-        state = self.backend.state
-        if not getattr(self, "_service_ok", True):
+        state = self._state
+        if not self._service_ok:
             items.append(MenuItem("Smart card service not running", enabled=False))
         elif state is None:
             items.append(MenuItem("No YubiKey", enabled=False))
@@ -626,7 +629,7 @@ class MainWindow(Adw.ApplicationWindow):
         return items
 
     def tray_tooltip(self) -> str:
-        state = self.backend.state
+        state = self._state
         if state is None or state.busy:
             return "No YubiKey"
         return state.name + (f" · {state.serial}" if state.serial else "")

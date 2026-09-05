@@ -1,5 +1,9 @@
 """YubiKey OATH access. All device I/O runs on one worker thread; results are
-delivered to the GTK main loop through GLib.idle_add."""
+delivered to the GTK main loop through GLib.idle_add.
+
+The UI only ever sees immutable DeviceState snapshots: the worker builds a new
+one for every change and emits it, so the main thread never reads a field the
+worker is halfway through updating."""
 
 from __future__ import annotations
 
@@ -7,7 +11,7 @@ import logging
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Callable
 
 import gi
@@ -34,15 +38,18 @@ SECRET_SCHEMA = Secret.Schema.new(
 )
 
 
-@dataclass
+@dataclass(frozen=True)
 class DeviceState:
-    """What the UI needs to know about the current key."""
+    """What the UI needs to know about the current key. Immutable: the backend
+    emits a fresh instance whenever something changes."""
 
     name: str
     serial: int | None
     device_id: str | None = None
     locked: bool = False
-    bad_password: bool = False
+    # None, or why the last authentication failed: "typed" (the user's entry
+    # was wrong) or "saved" (the key remembered in the keyring is stale).
+    auth_failure: str | None = None
     busy: bool = False  # another process holds the CCID interface
     has_password: bool = False
     fingerprint: str | None = None
@@ -76,11 +83,13 @@ class TouchTimeout(BackendError):
 class Backend:
     """Serialises all YubiKey access through a single worker thread.
 
-    Callbacks (set by the window) are always invoked on the GTK main loop:
+    Callbacks (set by the window before start()) are always invoked on the
+    GTK main loop:
       on_device(state | None)
       on_accounts(list[Credential], dict[bytes, Code])
       on_code(Credential, Code)
-      on_error(str)
+      on_error(str)      -- something failed; the UI resets pending rows
+      on_info(str)       -- a plain message worth showing
       on_service(bool)   -- False when pcscd is not reachable
       on_devices(list[DeviceSummary], active_fingerprint | None)
     """
@@ -92,6 +101,7 @@ class Backend:
         self.on_accounts: Callable[[list, dict], None] = lambda c, k: None
         self.on_code: Callable[[Credential, Code], None] = lambda c, k: None
         self.on_error: Callable[[str], None] = lambda m: None
+        self.on_info: Callable[[str], None] = lambda m: None
         self.on_service: Callable[[bool], None] = lambda ok: None
         self.on_devices: Callable[[list, str | None], None] = lambda d, a: None
 
@@ -153,10 +163,6 @@ class Backend:
     def reset_oath(self, done: Callable[[str | None], None]) -> None:
         self._queue.put(lambda: self._reset_oath(done))
 
-    @property
-    def state(self) -> DeviceState | None:
-        return self._state
-
     # -- worker ------------------------------------------------------------
 
     def _run(self) -> None:
@@ -175,21 +181,19 @@ class Backend:
                 # A failing job usually means the key went away.
                 self._poll(force=True)
 
-    def _emit(self, cb, *args) -> None:
-        """Dispatch to the main loop. Callbacks are resolved by attribute name at
-        dispatch time so a handler assigned after the thread started still runs."""
-        name = next(
-            (
-                n
-                for n in ("on_device", "on_accounts", "on_code", "on_error", "on_service", "on_devices")
-                if getattr(self, n) is cb
-            ),
-            None,
-        )
-        if name:
-            GLib.idle_add(lambda: (getattr(self, name)(*args), False)[1])
-        else:
-            GLib.idle_add(lambda: (cb(*args), False)[1])
+    @staticmethod
+    def _emit(cb, *args) -> None:
+        """Run a callback on the GTK main loop."""
+        GLib.idle_add(lambda: (cb(*args), False)[1])
+
+    def _update_state(self, **changes) -> None:
+        """Replace the snapshot with changed fields and tell the UI, if anything changed."""
+        if self._state is None:
+            return
+        new = replace(self._state, **changes)
+        if new != self._state:
+            self._state = new
+            self._emit(self.on_device, new)
 
     def _poll(self, force: bool = False) -> None:
         ok = _pcsc_available()
@@ -282,22 +286,21 @@ class Backend:
                 s.validate(key)
             except ApduError as e:
                 if e.sw in (SW.INCORRECT_PARAMETERS, SW.SECURITY_CONDITION_NOT_SATISFIED, SW.WRONG_LENGTH):
-                    self._set_locked(s.device_id, bad=True)
+                    self._set_locked(s.device_id, problem="typed")
+                    self._emit(self.on_error, "Wrong password")
                     return
                 raise
             self._key = key
             if remember:
                 _store_key(s.device_id, key)
-        self._state.locked = False
-        self._state.bad_password = False
-        self._emit(self.on_device, self._state)
+        self._update_state(locked=False, auth_failure=None)
         self._refresh()
 
     def _forget_password(self) -> None:
         if self._state and self._state.device_id:
             _clear_key(self._state.device_id)
         self._key = None
-        self._emit(self.on_error, "Saved password removed")
+        self._emit(self.on_info, "Saved password removed; the key will ask for it again")
 
     def _calculate(self, cred: Credential) -> None:
         try:
@@ -357,8 +360,7 @@ class Backend:
         except Exception as e:  # noqa: BLE001
             self._emit(done, self._describe(e))
             return
-        self._state.has_password = True
-        self._emit(self.on_device, self._state)
+        self._update_state(has_password=True)
         self._emit(done, None)
 
     def _remove_password(self, done) -> None:
@@ -373,8 +375,7 @@ class Backend:
         except Exception as e:  # noqa: BLE001
             self._emit(done, self._describe(e))
             return
-        self._state.has_password = False
-        self._emit(self.on_device, self._state)
+        self._update_state(has_password=False)
         self._emit(done, None)
 
     def _reset_oath(self, done) -> None:
@@ -392,19 +393,12 @@ class Backend:
         except Exception as e:  # noqa: BLE001
             self._emit(done, self._describe(e))
             return
-        self._state.has_password = False
-        self._state.locked = False
-        self._emit(self.on_device, self._state)
+        self._update_state(has_password=False, locked=False, auth_failure=None)
         self._emit(done, None)
         self._refresh()
 
-    def _set_locked(self, device_id: str, bad: bool = False) -> None:
-        if self._state is None:
-            return
-        self._state.device_id = device_id
-        self._state.locked = True
-        self._state.bad_password = bad
-        self._emit(self.on_device, self._state)
+    def _set_locked(self, device_id: str, problem: str | None = None) -> None:
+        self._update_state(device_id=device_id, locked=True, auth_failure=problem)
 
     @staticmethod
     def _describe(e: Exception) -> str:
@@ -450,12 +444,11 @@ class _SessionCtx:
                 except ApduError:
                     self.b._key = None
                     _clear_key(s.device_id)
-                    self.b._set_locked(s.device_id, bad=True)
+                    self.b._set_locked(s.device_id, problem="saved")
+                    self.b._emit(self.b.on_info, "The saved password no longer works; enter the new one")
                     raise _Locked() from None
                 self.b._key = key
-            if self.b._state is not None:
-                self.b._state.device_id = s.device_id
-                self.b._state.has_password = bool(s.has_key)
+            self.b._update_state(device_id=s.device_id, has_password=bool(s.has_key))
             return s
         except BaseException:
             self.conn.__exit__(None, None, None)
