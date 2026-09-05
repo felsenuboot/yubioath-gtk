@@ -11,8 +11,9 @@ from pathlib import Path
 
 import gi
 
+gi.require_version("Gdk", "4.0")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gdk, GdkPixbuf  # noqa: E402
+from gi.repository import Gdk, GdkPixbuf, GLib  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -55,9 +56,11 @@ class IconPack:
             # "Amazon JP" -> "amazon", "GitHub (work)" -> "github"
             candidates.append(_norm(re.split(r"[\s(:/-]", issuer.strip(), maxsplit=1)[0]))
         if name and "@" in name:
+            # "alice@mail.google.com" -> "mail.google.com", "mail", "google"
             domain = name.rsplit("@", 1)[1]
             candidates.append(_norm(domain))
-            candidates.append(_norm(domain.split(".")[0]))
+            labels = domain.split(".")
+            candidates.extend(_norm(label) for label in (labels[:-1] if len(labels) > 1 else labels))
         for c in candidates:
             if c and c in self._by_issuer:
                 return c
@@ -71,7 +74,17 @@ class IconPack:
             loader.write(data)
             loader.close()
             pixbuf = loader.get_pixbuf()
-            return Gdk.Texture.new_for_pixbuf(pixbuf) if pixbuf else None
+            if pixbuf is None:
+                return None
+            # Texture.new_for_pixbuf is deprecated; hand the pixels over directly.
+            fmt = Gdk.MemoryFormat.R8G8B8A8 if pixbuf.get_has_alpha() else Gdk.MemoryFormat.R8G8B8
+            return Gdk.MemoryTexture.new(
+                pixbuf.get_width(),
+                pixbuf.get_height(),
+                fmt,
+                GLib.Bytes.new(pixbuf.get_pixels()),
+                pixbuf.get_rowstride(),
+            )
         except Exception as e:  # noqa: BLE001
             log.debug("icon %s failed: %s", member, e)
             return None

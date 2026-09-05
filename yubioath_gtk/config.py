@@ -26,8 +26,8 @@ DEFAULTS: dict[str, Any] = {
 
 
 class Config:
-    def __init__(self) -> None:
-        self.path = Path(GLib.get_user_config_dir()) / "yubioath-gtk" / "config.json"
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path or Path(GLib.get_user_config_dir()) / "yubioath-gtk" / "config.json"
         self._data: dict[str, Any] = dict(DEFAULTS)
         try:
             with open(self.path, encoding="utf-8") as f:

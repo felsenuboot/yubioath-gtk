@@ -19,6 +19,10 @@ packages = ["yubioath_gtk"]
 [tool.setuptools.package-data]
 yubioath_gtk = ["*.css", "icons/**/*.svg"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
 [tool.ruff]
 line-length = 110
 target-version = "py311"
