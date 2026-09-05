@@ -19,6 +19,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python3 -m venv --system-site-packages .venv
+          .venv/bin/pip install --quiet --upgrade pip
           .venv/bin/pip install --quiet yubikey-manager pytest ruff pip-audit
       - name: Lint
         run: |
