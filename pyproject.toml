@@ -37,6 +37,7 @@ ignore = [
   "RUF012",  # __gsignals__ dicts are the PyGObject convention
   "PLW2901", # loop variable overwrite in tight loops is fine here
   "ISC001",  # conflicts with the formatter
+  "S603",    # subprocess argv is built from constants and shutil.which(), never from user input
 ]
 
 [tool.ruff.lint.per-file-ignores]

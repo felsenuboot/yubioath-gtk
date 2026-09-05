@@ -532,8 +532,8 @@ def _yubikey_busy() -> bool:
             except Exception as e:  # noqa: BLE001
                 if "0x8010000B" in str(e) or "Sharing violation" in str(e):
                     return True
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        log.debug("busy check failed: %s", e)
     return False
 
 
