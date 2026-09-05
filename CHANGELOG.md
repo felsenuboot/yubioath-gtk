@@ -7,6 +7,29 @@ set settles.
 
 ## [Unreleased]
 
+Towards v0.3.0 (Efficiency) and v0.4.0 (Portability).
+
+### Changed
+- Tray: `LayoutUpdated` is emitted only when the menu actually changed, not at
+  every TOTP rollover (#24).
+- The countdown timer runs only while the window is visible and a TOTP code is
+  counting down; hidden in the tray the process is idle (#25).
+- At rollover the old code stays visible, dimmed, until the new one arrives
+  instead of blinking to dots (#26).
+- The "service not running" page shows pcscd install commands for the detected
+  distro; startup checks GTK ≥ 4.14 and libadwaita ≥ 1.6 and prints one
+  readable line instead of a traceback (#27).
+- libsecret is optional: the key store is pluggable (libsecret, the `keyring`
+  package, or none, in which case "Remember on this computer" is hidden) (#30).
+
+### Fixed
+- Two config flushes racing could land the older snapshot last.
+
+### Pending (open pull request #47, needs a hardware check)
+- Event-driven key detection via `SCardGetStatusChange`; no more per-second
+  device-info reads from the key; PC/SC conditions detected by result code
+  (#15, #16, #29).
+
 ## [0.2.0] – 2026-09-06
 
 Hardening release: no new features, fewer surprises.
