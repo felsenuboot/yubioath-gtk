@@ -215,6 +215,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.remember_row = Adw.SwitchRow(
             title="Remember on this computer", subtitle="Stored in the system keyring"
         )
+        self.remember_row.set_visible(self.backend.keystore.available)
         group.add(self.password_row)
         group.add(self.remember_row)
         box.append(group)
@@ -528,7 +529,7 @@ class MainWindow(Adw.ApplicationWindow):
             return
         self.unlock_btn.set_sensitive(False)
         self.password_row.set_sensitive(False)
-        self.backend.unlock(pw, self.remember_row.get_active())
+        self.backend.unlock(pw, self.remember_row.get_active() and self.backend.keystore.available)
 
     def _show_device_info(self) -> None:
         if self._state is not None:
@@ -547,7 +548,7 @@ class MainWindow(Adw.ApplicationWindow):
         def on_remove(done):
             self.backend.remove_password(lambda err: (done(err), err or self._toast("Password removed", 2)))
 
-        PasswordDialog(state.has_password, on_set, on_remove).present(self)
+        PasswordDialog(state.has_password, on_set, on_remove, self.backend.keystore.available).present(self)
 
     def _confirm_reset(self) -> None:
         dlg = Adw.AlertDialog(

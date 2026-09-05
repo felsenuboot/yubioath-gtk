@@ -14,28 +14,19 @@ import time
 from dataclasses import dataclass, replace
 from collections.abc import Callable
 
-import gi
+from gi.repository import GLib
 
-gi.require_version("Secret", "1")
-from gi.repository import GLib, Secret  # noqa: E402
+from ykman.device import list_all_devices
+from yubikit.core import ApplicationNotAvailableError
+from yubikit.core.smartcard import ApduError, SW, SmartCardConnection
+from yubikit.management import CAPABILITY, FORM_FACTOR, TRANSPORT
+from yubikit.oath import Code, Credential, CredentialData, OathSession
 
-from ykman.device import list_all_devices  # noqa: E402
-from yubikit.core import ApplicationNotAvailableError  # noqa: E402
-from yubikit.core.smartcard import ApduError, SW, SmartCardConnection  # noqa: E402
-from yubikit.management import CAPABILITY, FORM_FACTOR, TRANSPORT  # noqa: E402
-from yubikit.oath import Code, Credential, CredentialData, OathSession  # noqa: E402
-
-from . import APP_ID  # noqa: E402
-from .config import config  # noqa: E402
+from .config import config
+from .keystore import KeyStore, default_store
 
 log = logging.getLogger(__name__)
 logging.getLogger("ykman").setLevel(logging.CRITICAL)
-
-SECRET_SCHEMA = Secret.Schema.new(
-    APP_ID,
-    Secret.SchemaFlags.NONE,
-    {"device_id": Secret.SchemaAttributeType.STRING},
-)
 
 
 @dataclass(frozen=True)
@@ -96,7 +87,8 @@ class Backend:
 
     POLL_INTERVAL = 1.0
 
-    def __init__(self) -> None:
+    def __init__(self, keystore: KeyStore | None = None) -> None:
+        self.keystore: KeyStore = keystore or default_store()
         self.on_device: Callable[[DeviceState | None], None] = lambda s: None
         self.on_accounts: Callable[[list, dict], None] = lambda c, k: None
         self.on_code: Callable[[Credential, Code], None] = lambda c, k: None
@@ -292,13 +284,13 @@ class Backend:
                 raise
             self._key = key
             if remember:
-                _store_key(s.device_id, key)
+                self.keystore.store(s.device_id, key)
         self._update_state(locked=False, auth_failure=None)
         self._refresh()
 
     def _forget_password(self) -> None:
         if self._state and self._state.device_id:
-            _clear_key(self._state.device_id)
+            self.keystore.clear(self._state.device_id)
         self._key = None
         self._emit(self.on_info, "Saved password removed; the key will ask for it again")
 
@@ -350,10 +342,10 @@ class Backend:
                 key = s.derive_key(password)
                 s.set_key(key)
                 self._key = key
-                if remember or _lookup_key(s.device_id) is not None:
-                    _store_key(s.device_id, key)
+                if remember or self.keystore.lookup(s.device_id) is not None:
+                    self.keystore.store(s.device_id, key)
                 else:
-                    _clear_key(s.device_id)
+                    self.keystore.clear(s.device_id)
         except _Locked:
             self._emit(done, "YubiKey is locked")
             return
@@ -367,7 +359,7 @@ class Backend:
         try:
             with self._session() as s:
                 s.unset_key()
-                _clear_key(s.device_id)
+                self.keystore.clear(s.device_id)
                 self._key = None
         except _Locked:
             self._emit(done, "YubiKey is locked")
@@ -388,7 +380,7 @@ class Backend:
                 s = OathSession(conn)
                 device_id = s.device_id
                 s.reset()
-            _clear_key(device_id)
+            self.keystore.clear(device_id)
             self._key = None
         except Exception as e:  # noqa: BLE001
             self._emit(done, self._describe(e))
@@ -435,7 +427,7 @@ class _SessionCtx:
         try:
             s = OathSession(conn)
             if s.locked:
-                key = self.b._key or _lookup_key(s.device_id)
+                key = self.b._key or self.b.keystore.lookup(s.device_id)
                 if key is None:
                     self.b._set_locked(s.device_id)
                     raise _Locked()
@@ -443,7 +435,7 @@ class _SessionCtx:
                     s.validate(key)
                 except ApduError:
                     self.b._key = None
-                    _clear_key(s.device_id)
+                    self.b.keystore.clear(s.device_id)
                     self.b._set_locked(s.device_id, problem="saved")
                     self.b._emit(self.b.on_info, "The saved password no longer works; enter the new one")
                     raise _Locked() from None
@@ -532,36 +524,3 @@ def _yubikey_busy() -> bool:
 
 def _sort_key(c: Credential):
     return ((c.issuer or c.name).lower(), c.name.lower())
-
-
-# -- libsecret ---------------------------------------------------------------
-
-
-def _lookup_key(device_id: str) -> bytes | None:
-    try:
-        hexkey = Secret.password_lookup_sync(SECRET_SCHEMA, {"device_id": device_id}, None)
-    except Exception as e:  # noqa: BLE001
-        log.warning("keyring lookup failed: %s", e)
-        return None
-    return bytes.fromhex(hexkey) if hexkey else None
-
-
-def _store_key(device_id: str, key: bytes) -> None:
-    try:
-        Secret.password_store_sync(
-            SECRET_SCHEMA,
-            {"device_id": device_id},
-            Secret.COLLECTION_DEFAULT,
-            f"YubiKey OATH password ({device_id})",
-            key.hex(),
-            None,
-        )
-    except Exception as e:  # noqa: BLE001
-        log.warning("keyring store failed: %s", e)
-
-
-def _clear_key(device_id: str) -> None:
-    try:
-        Secret.password_clear_sync(SECRET_SCHEMA, {"device_id": device_id}, None)
-    except Exception as e:  # noqa: BLE001
-        log.warning("keyring clear failed: %s", e)
