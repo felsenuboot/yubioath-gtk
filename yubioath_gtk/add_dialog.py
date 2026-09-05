@@ -129,9 +129,12 @@ class AddAccountDialog(Adw.Dialog):
 
     def _do_scan(self) -> bool:
         try:
-            shot = subprocess.run(["grim", "-"], capture_output=True, check=True, timeout=10).stdout
+            grim, zbarimg = shutil.which("grim"), shutil.which("zbarimg")
+            if not grim or not zbarimg:
+                raise FileNotFoundError("grim or zbarimg not found")
+            shot = subprocess.run([grim, "-"], capture_output=True, check=True, timeout=10).stdout
             out = subprocess.run(
-                ["zbarimg", "-q", "--raw", "-"], input=shot, capture_output=True, timeout=20, check=False
+                [zbarimg, "-q", "--raw", "-"], input=shot, capture_output=True, timeout=20, check=False
             ).stdout.decode(errors="replace")
         except Exception as e:  # noqa: BLE001
             self.set_sensitive(True)

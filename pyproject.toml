@@ -28,7 +28,7 @@ line-length = 110
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "B", "UP", "SIM", "PL", "RUF", "PERF", "BLE", "C4", "PIE", "RET", "ISC", "N"]
+select = ["E", "F", "W", "B", "UP", "SIM", "PL", "RUF", "PERF", "BLE", "C4", "PIE", "RET", "ISC", "N", "S"]
 ignore = [
   "E501",    # line length: ruff format handles it
   "PLR0913", "PLR0912", "PLR0915", "PLR0911", "PLR2004",  # complexity / magic-number heuristics
@@ -41,4 +41,4 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "yubioath_gtk/_fake.py" = ["PLR6301"]
-"tests/*" = ["PLR2004", "S101"]
+"tests/*" = ["PLR2004", "S101", "S108"]
