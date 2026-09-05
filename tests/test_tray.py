@@ -42,12 +42,20 @@ def test_layout_numbers_items_from_one_and_nests_children_as_variants():
     assert clicked == ["A"]
 
 
-def test_rebuild_bumps_revision():
-    tray = build_tray([MenuItem("A")])
+def test_rebuild_bumps_revision_only_when_the_menu_looks_different():
+    items = [MenuItem("A", lambda: None)]
+    tray = build_tray(items)
     r0 = tray._revision
-    tray._rebuild()
-    tray._rebuild()
-    assert tray._revision == r0 + 2
+    assert tray._rebuild() is True
+    items[0] = MenuItem("A", lambda: None)  # same label, new callback
+    assert tray._rebuild() is False
+    assert tray._revision == r0 + 1
+    assert tray._items[1] is items[0]  # but the fresh callback is kept
+    items[0] = MenuItem("A", enabled=False)
+    assert tray._rebuild() is True
+    items.append(MenuItem("B"))
+    assert tray._rebuild() is True
+    assert tray._revision == r0 + 3
 
 
 def test_disabled_item_does_not_fire():

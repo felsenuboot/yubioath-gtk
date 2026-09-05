@@ -135,6 +135,7 @@ class TrayIcon:
         self._watch_id = 0
         self._revision = 0
         self._items: dict[int, MenuItem] = {}
+        self._signature: list[tuple] = []  # what hosts last saw, minus callbacks
         self._tooltip = ""
         self._pixmaps = _render_pixmaps(APP_ICON)
         self.registered = False
@@ -216,18 +217,28 @@ class TrayIcon:
     # -- updates -------------------------------------------------------------
 
     def refresh(self, tooltip: str = "") -> None:
-        """Rebuild the menu from `build_menu()` and tell hosts about it."""
+        """Rebuild the menu from `build_menu()` and tell hosts only if what they
+        would see has changed. The window calls this at every TOTP rollover;
+        without the check every host re-fetched the whole layout, icons
+        included, every 30 s."""
         if self._conn is None:
             return
         if tooltip != self._tooltip:
             self._tooltip = tooltip
             self._emit(ITEM_PATH, ITEM_IFACE, "NewToolTip", None)
-        self._rebuild()
-        self._emit(MENU_PATH, MENU_IFACE, "LayoutUpdated", GLib.Variant("(ui)", (self._revision, 0)))
+        if self._rebuild():
+            self._emit(MENU_PATH, MENU_IFACE, "LayoutUpdated", GLib.Variant("(ui)", (self._revision, 0)))
 
-    def _rebuild(self) -> None:
+    def _rebuild(self) -> bool:
+        """Refresh the items (their callbacks may close over new objects) and
+        return True when the visible part changed, bumping the revision."""
         self._items = {i + 1: item for i, item in enumerate(self._build_menu())}
+        signature = [(it.label, it.enabled, it.separator, it.icon_png) for it in self._items.values()]
+        if signature == self._signature:
+            return False
+        self._signature = signature
         self._revision += 1
+        return True
 
     def _emit(self, path: str, iface: str, signal: str, params) -> None:
         try:
