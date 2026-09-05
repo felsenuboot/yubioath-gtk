@@ -14,6 +14,22 @@ from gi.repository import Adw, GLib, Gtk  # noqa: E402
 from yubikit.oath import HASH_ALGORITHM, OATH_TYPE, CredentialData, parse_b32_key  # noqa: E402
 
 ALGOS = [HASH_ALGORITHM.SHA1, HASH_ALGORITHM.SHA256, HASH_ALGORITHM.SHA512]
+DIGITS = [6, 7, 8]  # what the YubiKey OATH applet accepts
+PERIOD_RANGE = (1, 3600)  # seconds; the key takes the time step from the host, so any period works
+DEFAULT_PERIOD = 30
+
+
+def unsupported_reason(d: CredentialData) -> str | None:
+    """Why this credential cannot be stored as described, or None if it can.
+    Used so a QR code is never silently saved with different parameters."""
+    if d.digits not in DIGITS:
+        return f"{d.digits} digits are not supported (6, 7 or 8)"
+    if d.hash_algorithm not in ALGOS:
+        return f"Unsupported algorithm {d.hash_algorithm.name}"
+    lo, hi = PERIOD_RANGE
+    if d.oath_type == OATH_TYPE.TOTP and not lo <= d.period <= hi:
+        return f"Period {d.period} s is outside {lo} to {hi} s"
+    return None
 
 
 class AddAccountDialog(Adw.Dialog):
@@ -66,10 +82,10 @@ class AddAccountDialog(Adw.Dialog):
         self.algo_row = Adw.ComboRow(
             title="Algorithm", model=Gtk.StringList.new(["SHA1", "SHA256", "SHA512"])
         )
-        self.digits_row = Adw.ComboRow(title="Digits", model=Gtk.StringList.new(["6", "8"]))
-        self.period_row = Adw.SpinRow.new_with_range(15, 300, 1)
+        self.digits_row = Adw.ComboRow(title="Digits", model=Gtk.StringList.new([str(n) for n in DIGITS]))
+        self.period_row = Adw.SpinRow.new_with_range(*PERIOD_RANGE, 1)
         self.period_row.set_title("Period (seconds)")
-        self.period_row.set_value(30)
+        self.period_row.set_value(DEFAULT_PERIOD)
         self.counter_row = Adw.SpinRow.new_with_range(0, 2**31, 1)
         self.counter_row.set_title("Initial counter")
         self.counter_row.set_visible(False)
@@ -104,13 +120,21 @@ class AddAccountDialog(Adw.Dialog):
         try:
             data = CredentialData.parse_uri(text)
         except Exception as e:  # noqa: BLE001
-            row.add_css_class("error")
-            self.add_btn.set_sensitive(False)
-            self.add_btn.set_tooltip_text(str(e))
+            self._reject_uri(row, str(e))
+            return
+        reason = unsupported_reason(data)
+        if reason:
+            self._reject_uri(row, reason)
+            self._toast(reason)
             return
         row.remove_css_class("error")
         self._fill_from(data)
         self._validate()
+
+    def _reject_uri(self, row: Adw.EntryRow, reason: str) -> None:
+        row.add_css_class("error")
+        self.add_btn.set_sensitive(False)
+        self.add_btn.set_tooltip_text(reason)
 
     def _fill_from(self, d: CredentialData) -> None:
         self.issuer_row.set_text(d.issuer or "")
@@ -118,7 +142,7 @@ class AddAccountDialog(Adw.Dialog):
         self.secret_row.set_text(base64.b32encode(d.secret).decode().rstrip("="))
         self.type_row.set_selected(1 if d.oath_type == OATH_TYPE.HOTP else 0)
         self.algo_row.set_selected(ALGOS.index(d.hash_algorithm))
-        self.digits_row.set_selected(1 if d.digits == 8 else 0)
+        self.digits_row.set_selected(DIGITS.index(d.digits))
         self.period_row.set_value(d.period)
         self.counter_row.set_value(d.counter)
 
@@ -167,7 +191,7 @@ class AddAccountDialog(Adw.Dialog):
                 oath_type=OATH_TYPE.HOTP if self.type_row.get_selected() == 1 else OATH_TYPE.TOTP,
                 hash_algorithm=ALGOS[self.algo_row.get_selected()],
                 secret=parse_b32_key(self.secret_row.get_text()),
-                digits=8 if self.digits_row.get_selected() == 1 else 6,
+                digits=DIGITS[self.digits_row.get_selected()],
                 period=int(self.period_row.get_value()),
                 counter=int(self.counter_row.get_value()),
                 issuer=self.issuer_row.get_text().strip() or None,
