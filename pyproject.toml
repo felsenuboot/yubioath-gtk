@@ -19,12 +19,16 @@ packages = ["yubioath_gtk"]
 [tool.setuptools.package-data]
 yubioath_gtk = ["*.css", "icons/**/*.svg"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
 [tool.ruff]
 line-length = 110
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "B", "UP", "SIM", "PL", "RUF", "PERF", "BLE", "C4", "PIE", "RET", "ISC", "N"]
+select = ["E", "F", "W", "B", "UP", "SIM", "PL", "RUF", "PERF", "BLE", "C4", "PIE", "RET", "ISC", "N", "S"]
 ignore = [
   "E501",    # line length: ruff format handles it
   "PLR0913", "PLR0912", "PLR0915", "PLR0911", "PLR2004",  # complexity / magic-number heuristics
@@ -33,8 +37,9 @@ ignore = [
   "RUF012",  # __gsignals__ dicts are the PyGObject convention
   "PLW2901", # loop variable overwrite in tight loops is fine here
   "ISC001",  # conflicts with the formatter
+  "S603",    # subprocess argv is built from constants and shutil.which(), never from user input
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "yubioath_gtk/_fake.py" = ["PLR6301"]
-"tests/*" = ["PLR2004", "S101"]
+"tests/*" = ["PLR2004", "S101", "S108"]
