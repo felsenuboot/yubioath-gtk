@@ -9,6 +9,7 @@ either way; sway and other wlroots compositors need the fallback.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shutil
@@ -50,7 +51,9 @@ class Clipboard:
 
     def _copy_external(self, text: str, clear_after: int) -> None:
         try:
-            proc = Gio.Subprocess.new([self._wl_copy], Gio.SubprocessFlags.STDIN_PIPE | Gio.SubprocessFlags.STDERR_SILENCE)
+            proc = Gio.Subprocess.new(
+                [self._wl_copy], Gio.SubprocessFlags.STDIN_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
+            )
         except GLib.Error as e:
             log.warning("wl-copy failed to start: %s", e)
             self._copy_gdk(text, clear_after)
@@ -76,7 +79,8 @@ class Clipboard:
             return False
         try:
             proc = Gio.Subprocess.new(
-                [self._wl_paste, "--no-newline"], Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
+                [self._wl_paste, "--no-newline"],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
             )
         except GLib.Error:
             return False
@@ -87,10 +91,8 @@ class Clipboard:
             except GLib.Error:
                 return
             if out == text:
-                try:
+                with contextlib.suppress(GLib.Error):
                     Gio.Subprocess.new([self._wl_copy, "--clear"], Gio.SubprocessFlags.STDERR_SILENCE)
-                except GLib.Error:
-                    pass
 
         proc.communicate_utf8_async(None, None, done)
         return False

@@ -27,7 +27,7 @@ class YubiOathApp(Adw.Application):
         )
         GLib.set_application_name(APP_NAME)
         if fake:
-            from ._fake import FakeBackend  # noqa: PLC0415
+            from ._fake import FakeBackend
 
             self.backend = FakeBackend()
         else:
@@ -44,9 +44,7 @@ class YubiOathApp(Adw.Application):
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
-        Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(
-            os.path.join(HERE, "icons")
-        )
+        Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(os.path.join(HERE, "icons"))
         self._apply_theme(config.get("theme"))
         about = Gio.SimpleAction.new("about", None)
         about.connect("activate", self._about)
@@ -67,7 +65,10 @@ class YubiOathApp(Adw.Application):
         self.set_tray_enabled(tray)
         # Dev aid: YUBIOATH_FAKE=1 YUBIOATH_OPEN=<win action> opens a dialog on launch.
         if os.environ.get("YUBIOATH_FAKE") and os.environ.get("YUBIOATH_OPEN"):
-            GLib.timeout_add(1200, lambda: (self.window.activate_action("win." + os.environ["YUBIOATH_OPEN"], None), False)[1])
+            GLib.timeout_add(
+                1200,
+                lambda: (self.window.activate_action("win." + os.environ["YUBIOATH_OPEN"], None), False)[1],
+            )
         if not (tray and config.get("start_hidden")):
             self.window.present()
 

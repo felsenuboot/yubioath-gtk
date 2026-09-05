@@ -21,3 +21,20 @@ yubioath_gtk = ["*.css", "icons/**/*.svg"]
 
 [tool.ruff]
 line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "SIM", "PL", "RUF", "PERF", "BLE", "C4", "PIE", "RET", "ISC", "N"]
+ignore = [
+  "E501",    # line length: ruff format handles it
+  "PLR0913", "PLR0912", "PLR0915", "PLR0911", "PLR2004",  # complexity / magic-number heuristics
+  "PLC0415", # imports inside functions are deliberate (lazy gi/ykman imports)
+  "N802", "N803", "N815", "N818",  # GObject vtable names (do_startup), signal arg names
+  "RUF012",  # __gsignals__ dicts are the PyGObject convention
+  "PLW2901", # loop variable overwrite in tight loops is fine here
+  "ISC001",  # conflicts with the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"yubioath_gtk/_fake.py" = ["PLR6301"]
+"tests/*" = ["PLR2004", "S101"]

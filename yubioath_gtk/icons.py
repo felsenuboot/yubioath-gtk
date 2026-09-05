@@ -12,7 +12,7 @@ from pathlib import Path
 import gi
 
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gdk, GdkPixbuf, GLib  # noqa: E402
+from gi.repository import Gdk, GdkPixbuf  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class IconPack:
         if issuer:
             candidates.append(_norm(issuer))
             # "Amazon JP" -> "amazon", "GitHub (work)" -> "github"
-            candidates.append(_norm(re.split(r"[\s(:/-]", issuer.strip(), 1)[0]))
+            candidates.append(_norm(re.split(r"[\s(:/-]", issuer.strip(), maxsplit=1)[0]))
         if name and "@" in name:
             domain = name.rsplit("@", 1)[1]
             candidates.append(_norm(domain))
@@ -68,7 +68,7 @@ class IconPack:
             data = self._zip.read(member)
             loader = GdkPixbuf.PixbufLoader()
             loader.connect("size-prepared", lambda ld, w, h: ld.set_size(size, int(size * h / max(w, 1))))
-            loader.write(GLib.Bytes.new(data).get_data())
+            loader.write(data)
             loader.close()
             pixbuf = loader.get_pixbuf()
             return Gdk.Texture.new_for_pixbuf(pixbuf) if pixbuf else None

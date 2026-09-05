@@ -22,6 +22,14 @@
   font-size: 0.85em;
 }
 
+.countdown-ring {
+  color: @accent_color;
+}
+
+.countdown-ring.urgent {
+  color: @error_color;
+}
+
 .favorite-star {
   color: @warning_color;
   opacity: 0.9;

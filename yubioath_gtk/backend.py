@@ -8,7 +8,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable
+from collections.abc import Callable
 
 import gi
 
@@ -169,7 +169,7 @@ class Backend:
                 continue
             try:
                 job()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 log.exception("job failed")
                 self._emit(self.on_error, self._describe(e))
                 # A failing job usually means the key went away.
@@ -178,8 +178,14 @@ class Backend:
     def _emit(self, cb, *args) -> None:
         """Dispatch to the main loop. Callbacks are resolved by attribute name at
         dispatch time so a handler assigned after the thread started still runs."""
-        name = next((n for n in ("on_device", "on_accounts", "on_code", "on_error", "on_service", "on_devices")
-                     if getattr(self, n) is cb), None)
+        name = next(
+            (
+                n
+                for n in ("on_device", "on_accounts", "on_code", "on_error", "on_service", "on_devices")
+                if getattr(self, n) is cb
+            ),
+            None,
+        )
         if name:
             GLib.idle_add(lambda: (getattr(self, name)(*args), False)[1])
         else:
@@ -445,7 +451,7 @@ class _SessionCtx:
                     self.b._key = None
                     _clear_key(s.device_id)
                     self.b._set_locked(s.device_id, bad=True)
-                    raise _Locked()
+                    raise _Locked() from None
                 self.b._key = key
             if self.b._state is not None:
                 self.b._state.device_id = s.device_id
@@ -481,7 +487,7 @@ _APP_NAMES = [
 
 def _device_name(dev, info) -> str:
     try:
-        from ykman.scripting import get_name  # noqa: PLC0415
+        from ykman.scripting import get_name
 
         return get_name(info, dev.pid.yubikey_type if dev.pid else None)
     except Exception:  # noqa: BLE001
@@ -502,7 +508,7 @@ def _applications(info) -> dict[str, dict[str, bool]]:
 def _pcsc_available() -> bool:
     """True when pcscd answers. ykman swallows this error, so check directly."""
     try:
-        from smartcard.System import readers  # noqa: PLC0415
+        from smartcard.System import readers
 
         readers()
         return True
@@ -514,7 +520,7 @@ def _yubikey_busy() -> bool:
     """True when a YubiKey reader exists but the card is locked by another client
     (typically Yubico Authenticator or GnuPG's scdaemon)."""
     try:
-        from smartcard.System import readers  # noqa: PLC0415
+        from smartcard.System import readers
 
         for r in readers():
             if "yubi" not in str(r).lower():
@@ -536,6 +542,7 @@ def _sort_key(c: Credential):
 
 
 # -- libsecret ---------------------------------------------------------------
+
 
 def _lookup_key(device_id: str) -> bytes | None:
     try:
