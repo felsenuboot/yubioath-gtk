@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import base64
-import shutil
-import subprocess
 from collections.abc import Callable
 
 import gi
@@ -12,6 +10,8 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from yubikit.oath import HASH_ALGORITHM, OATH_TYPE, CredentialData, parse_b32_key  # noqa: E402
+
+from . import scan  # noqa: E402
 
 ALGOS = [HASH_ALGORITHM.SHA1, HASH_ALGORITHM.SHA256, HASH_ALGORITHM.SHA512]
 
@@ -41,10 +41,10 @@ class AddAccountDialog(Adw.Dialog):
         self.uri_row = Adw.EntryRow(title="otpauth:// URI")
         self.uri_row.connect("changed", self._uri_changed)
         g.add(self.uri_row)
-        if shutil.which("grim") and shutil.which("zbarimg"):
-            scan = Adw.ButtonRow(title="Scan QR code on screen", start_icon_name="camera-photo-symbolic")
-            scan.connect("activated", self._scan_screen)
-            g.add(scan)
+        if scan.tools_available():
+            scan_row = Adw.ButtonRow(title="Scan QR code on screen", start_icon_name="camera-photo-symbolic")
+            scan_row.connect("activated", self._scan_screen)
+            g.add(scan_row)
         page.add(g)
 
         # -- manual -----------------------------------------------------
@@ -125,28 +125,16 @@ class AddAccountDialog(Adw.Dialog):
     def _scan_screen(self, *_):
         self.set_sensitive(False)
         # Give the dialog a moment so the QR code is not hidden behind it.
-        GLib.timeout_add(150, self._do_scan)
+        GLib.timeout_add(150, lambda: (scan.scan_screen(self._scanned), False)[1])
 
-    def _do_scan(self) -> bool:
-        try:
-            grim, zbarimg = shutil.which("grim"), shutil.which("zbarimg")
-            if not grim or not zbarimg:
-                raise FileNotFoundError("grim or zbarimg not found")
-            shot = subprocess.run([grim, "-"], capture_output=True, check=True, timeout=10).stdout
-            out = subprocess.run(
-                [zbarimg, "-q", "--raw", "-"], input=shot, capture_output=True, timeout=20, check=False
-            ).stdout.decode(errors="replace")
-        except Exception as e:  # noqa: BLE001
-            self.set_sensitive(True)
-            self._toast(f"Scan failed: {e}")
-            return False
+    def _scanned(self, uris: list[str], error: str | None) -> None:
         self.set_sensitive(True)
-        uris = [line.strip() for line in out.splitlines() if line.strip().startswith("otpauth://")]
-        if not uris:
+        if error:
+            self._toast(f"Scan failed: {error}")
+        elif not uris:
             self._toast("No otpauth QR code found on screen")
-            return False
-        self.uri_row.set_text(uris[0])
-        return False
+        else:
+            self.uri_row.set_text(uris[0])
 
     def _validate(self) -> None:
         ok = bool(self.name_row.get_text().strip()) and bool(self.secret_row.get_text().strip())
