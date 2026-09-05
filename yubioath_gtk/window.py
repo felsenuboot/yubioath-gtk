@@ -38,6 +38,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.backend = backend
         self.rows: dict[bytes, AccountRow] = {}
         self._refresh_source: int | None = None
+        self._tick_source: int | None = None
         self._creds: list[Credential] = []
         self._state: DeviceState | None = None  # last snapshot from the backend
         self._service_ok = True
@@ -126,8 +127,6 @@ class MainWindow(Adw.ApplicationWindow):
         self.add_action(self.device_action)
         for name in ("device-info", "password", "reset-oath"):
             self.lookup_action(name).set_enabled(False)
-
-        GLib.timeout_add(250, self._tick)
 
     # -- construction --------------------------------------------------------
 
@@ -335,6 +334,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.stack.set_visible_child_name("list" if creds else "empty")
         self.listbox.invalidate_filter()
         self._schedule_refresh(codes.values())
+        self._update_ticking()
         self._changed()
 
     def _on_code(self, cred: Credential, code: Code) -> None:
@@ -343,6 +343,7 @@ class MainWindow(Adw.ApplicationWindow):
             return
         row.set_code(code)
         row.reveal()
+        self._update_ticking()
         self._copy(row)
 
     # -- ordering, favorites, icons ------------------------------------------
@@ -430,12 +431,28 @@ class MainWindow(Adw.ApplicationWindow):
             and self._refresh_source is None
         ):
             self.backend.refresh()
+        self._update_ticking()
         self._changed()
+
+    # -- countdown animation -------------------------------------------------
+    # The 4 Hz timer only runs while the window is visible and at least one
+    # row has a TOTP code to count down; hidden in the tray, nothing wakes up.
+
+    def _update_ticking(self) -> None:
+        wanted = self.is_visible() and any(r.needs_tick for r in self.rows.values())
+        if wanted and self._tick_source is None:
+            self._tick_source = GLib.timeout_add(250, self._tick)
+        elif not wanted and self._tick_source is not None:
+            GLib.source_remove(self._tick_source)
+            self._tick_source = None
 
     def _tick(self) -> bool:
         now = time.time()
         for row in self.rows.values():
             row.tick(now)
+        if not any(r.needs_tick for r in self.rows.values()):
+            self._tick_source = None
+            return False
         return True
 
     # -- row actions ---------------------------------------------------------
@@ -584,6 +601,7 @@ class MainWindow(Adw.ApplicationWindow):
         for row in self.rows.values():
             self.listbox.remove(row)
         self.rows.clear()
+        self._update_ticking()
 
     def _toast(self, msg: str, timeout: int = 4) -> None:
         if self.is_active():

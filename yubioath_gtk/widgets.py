@@ -13,6 +13,11 @@ from gi.repository import Adw, GLib, GObject, Gtk, Pango  # noqa: E402
 from yubikit.oath import OATH_TYPE, Code, Credential  # noqa: E402
 
 
+# An expired code stays on screen, dimmed, until the refresh replaces it; if
+# nothing does within this many seconds (key gone, window hidden) it is dropped.
+EXPIRED_GRACE = 5.0
+
+
 def format_code(value: str) -> str:
     half = len(value) // 2
     return f"{value[:half]} {value[half:]}"
@@ -79,6 +84,7 @@ class AccountRow(Gtk.ListBoxRow):
         self.cred = cred
         self.code: Code | None = None
         self._pending = False
+        self._expired = False
         self.favorite = False
         self.hide_codes = False
         self.revealed = False
@@ -197,22 +203,34 @@ class AccountRow(Gtk.ListBoxRow):
             self._refresh_indicator()
             return
         self.code = code
+        self._expired = False
         self._refresh_indicator()
 
     def set_pending(self) -> None:
         self._pending = True
         self.indicator.set_visible_child_name("busy")
 
+    @property
+    def needs_tick(self) -> bool:
+        """True while there is a TOTP countdown (or an expired code) to animate."""
+        return self.code is not None and not self._pending and self.cred.oath_type != OATH_TYPE.HOTP
+
     def tick(self, now: float) -> None:
-        if self.code is None or self._pending:
-            return
-        if self.cred.oath_type == OATH_TYPE.HOTP:
+        if not self.needs_tick:
             return
         remaining = self.code.valid_to - now
         if remaining <= 0:
-            self.code = None
-            self.revealed = False
-            self._refresh_indicator()
+            if remaining < -EXPIRED_GRACE:
+                self.code = None
+                self._expired = False
+                self.revealed = False
+                self._refresh_indicator()
+            elif not self._expired:
+                # Keep showing the old code, dimmed, instead of blinking to dots
+                # for the half second until the refresh lands.
+                self._expired = True
+                self.code_label.add_css_class("dim-label")
+                self.ring.set_fraction(0, False)
             return
         total = max(self.code.valid_to - self.code.valid_from, 1)
         self.ring.set_fraction(remaining / total, remaining < 5)
