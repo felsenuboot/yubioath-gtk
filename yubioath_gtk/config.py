@@ -86,8 +86,9 @@ class Config:
             if self._save_source is not None:
                 GLib.source_remove(self._save_source)
                 self._save_source = None
-            snapshot = json.dumps(self._data, indent=2)
-        self._write(snapshot)
+            # Write while still holding the lock: two flushes racing outside it
+            # could otherwise land an older snapshot last.
+            self._write(json.dumps(self._data, indent=2))
 
     def _write(self, text: str) -> None:
         try:
