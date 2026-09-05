@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import struct
 import time
+from dataclasses import replace
 
 from gi.repository import GLib
 
@@ -108,7 +109,9 @@ class FakeBackend(Backend):
         self.refresh()
 
     def forget_password(self) -> None:
-        GLib.idle_add(lambda: (self.on_error("Saved password removed"), False)[1])
+        GLib.idle_add(
+            lambda: (self.on_info("Saved password removed; the key will ask for it again"), False)[1]
+        )
 
     def add(self, data, touch, done) -> None:
         cid = f"{data.issuer}:{data.name}".encode() if data.issuer else data.name.encode()
@@ -134,14 +137,14 @@ class FakeBackend(Backend):
         GLib.idle_add(lambda: (self.on_error(f"Selected {fingerprint}"), False)[1])
 
     def set_password(self, password, remember, done) -> None:
-        self._state.has_password = True
+        self._state = replace(self._state, has_password=True)
         GLib.timeout_add(300, lambda: (self.on_device(self._state), done(None), False)[-1])
 
     def remove_password(self, done) -> None:
-        self._state.has_password = False
+        self._state = replace(self._state, has_password=False)
         GLib.timeout_add(300, lambda: (self.on_device(self._state), done(None), False)[-1])
 
     def reset_oath(self, done) -> None:
         self._creds.clear()
-        self._state.has_password = False
+        self._state = replace(self._state, has_password=False)
         GLib.timeout_add(300, lambda: (self.on_device(self._state), done(None), self.refresh(), False)[-1])
