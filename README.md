@@ -3,6 +3,9 @@
 OATH one-time passwords (TOTP/HOTP) from a YubiKey, in a small GTK4 + libadwaita
 window. A Linux-native replacement for the OTP part of Yubico Authenticator.
 
+[![CI](https://github.com/felsenuboot/yubioath-gtk/actions/workflows/ci.yml/badge.svg)](https://github.com/felsenuboot/yubioath-gtk/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/felsenuboot/yubioath-gtk/actions/workflows/codeql.yml/badge.svg)](https://github.com/felsenuboot/yubioath-gtk/actions/workflows/codeql.yml)
+
 <p align="center">
   <img src="data/screenshots/dark.png" width="360" alt="YubiOath, dark theme">
   <img src="data/screenshots/light.png" width="360" alt="YubiOath, light theme">
@@ -116,6 +119,23 @@ either way.
 | F5 / Ctrl+R | Refresh |
 | Ctrl+W | Close the window (hides it when "Close to tray" is on) |
 | Ctrl+Q | Quit |
+
+## Development
+
+```sh
+pipx install ruff pytest          # or your distro's packages
+ruff check . && ruff format --check .
+pytest
+YUBIOATH_FAKE=1 python -m yubioath_gtk   # UI without hardware
+```
+
+Work happens on branches, one per issue, merged into `master` through a pull
+request once CI (ruff, pytest, pip-audit, CodeQL) is green; `master` is
+protected accordingly. Issues are grouped into
+[milestones](https://github.com/felsenuboot/yubioath-gtk/milestones), each
+milestone ends in a tag `vX.Y.Z` and a GitHub release whose notes come from
+[CHANGELOG.md](CHANGELOG.md). Versions stay at 0.x while the feature set is
+still moving. The version number lives only in `pyproject.toml`.
 
 ## License
 
