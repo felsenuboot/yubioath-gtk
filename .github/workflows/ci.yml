@@ -27,4 +27,4 @@ jobs:
       - name: Test
         run: .venv/bin/pytest -q
       - name: Audit dependencies for known vulnerabilities
-        run: .venv/bin/pip-audit --strict --progress-spinner off
+        run: .venv/bin/pip-audit --local --strict --progress-spinner off  # --local skips apt-installed packages
