@@ -75,6 +75,7 @@ class YubiOathApp(Adw.Application):
     def do_shutdown(self) -> None:
         self.set_tray_enabled(False)
         self.backend.stop()
+        config.flush()
         Adw.Application.do_shutdown(self)
 
     # -- tray ----------------------------------------------------------------
