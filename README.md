@@ -39,16 +39,30 @@ key derived from your OATH password, and only if you tick "Remember on this
 computer", in which case it goes to the system keyring via libsecret. The app
 holds the smart card connection only for the duration of each operation.
 
-## Requirements (Arch)
+## Requirements
+
+Python ≥ 3.11, GTK ≥ 4.14, libadwaita ≥ 1.6, PyGObject, libsecret,
+[yubikey-manager](https://github.com/Yubico/yubikey-manager) ≥ 5.5 (the
+`ykman` Python package), and a running pcscd with the CCID driver.
 
 ```sh
+# Arch
 sudo pacman -S --needed yubikey-manager ccid python-gobject gtk4 libadwaita libsecret
 sudo systemctl enable --now pcscd.socket
-# optional, for "Scan QR code on screen":
-sudo pacman -S --needed grim zbar
-# optional, for copying from the tray on sway and other wlroots compositors:
-sudo pacman -S --needed wl-clipboard
+
+# Debian / Ubuntu (24.04+ has libadwaita 1.5 only; use pip for ykman)
+sudo apt install pcscd python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-secret-1 pipx
+pipx install yubikey-manager
+
+# Fedora
+sudo dnf install pcsc-lite ccid python3-gobject gtk4 libadwaita libsecret yubikey-manager
+sudo systemctl enable --now pcscd.socket
 ```
+
+Optional: `grim` + `zbar` for "Scan QR code on screen" (wlroots/Hyprland),
+`wl-clipboard` for copying from the tray on sway and other compositors that
+validate the input serial. The "service not running" page shows the commands
+for your distro.
 
 ## Install / run
 

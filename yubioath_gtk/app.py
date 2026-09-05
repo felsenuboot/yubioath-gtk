@@ -13,6 +13,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 from . import APP_ID, APP_NAME, VERSION  # noqa: E402
 from .backend import Backend  # noqa: E402
 from .config import config  # noqa: E402
+from .sysinfo import stack_too_old  # noqa: E402
 from .tray import TrayIcon  # noqa: E402
 from .window import MainWindow  # noqa: E402
 
@@ -164,6 +165,9 @@ def main(argv: list[str]) -> int:
     logging.basicConfig(level=logging.DEBUG if debug else logging.WARNING)
     if debug:
         logging.getLogger("ykman").setLevel(logging.DEBUG)
+    if problem := stack_too_old():
+        print(problem, file=sys.stderr)
+        return 1
     return YubiOathApp().run(argv)
 
 

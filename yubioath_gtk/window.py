@@ -17,6 +17,7 @@ from .config import config  # noqa: E402
 from .dialogs import DeviceInfoDialog, PasswordDialog  # noqa: E402
 from .icons import load_pack  # noqa: E402
 from .prefs import PreferencesDialog  # noqa: E402
+from .sysinfo import pcsc_install_hint  # noqa: E402
 from .tray import MenuItem  # noqa: E402
 from .widgets import AccountRow  # noqa: E402
 
@@ -165,7 +166,7 @@ class MainWindow(Adw.ApplicationWindow):
             title="Smart card service not running",
             description="YubiOath talks to the YubiKey through pcscd. Install the CCID driver and start the service:",
         )
-        cmd = Gtk.Label(label="sudo pacman -S --needed ccid\nsudo systemctl enable --now pcscd.socket")
+        cmd = Gtk.Label(label=pcsc_install_hint())
         cmd.set_selectable(True)
         cmd.add_css_class("monospace")
         cmd.add_css_class("card")
