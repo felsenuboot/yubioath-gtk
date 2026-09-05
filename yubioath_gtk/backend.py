@@ -1,6 +1,12 @@
 """YubiKey OATH access. All device I/O runs on one worker thread; results are
 delivered to the GTK main loop through GLib.idle_add.
 
+Key detection is event-driven: a pcsc.ReaderWatcher sleeps in
+SCardGetStatusChange and wakes the worker when a reader or card changes. The
+worker itself only lists reader names (no card I/O) on a slow safety tick and
+runs ykman's full enumeration, which talks to every key, only when the reader
+set changed or something asked for it.
+
 The UI only ever sees immutable DeviceState snapshots: the worker builds a new
 one for every change and emits it, so the main thread never reads a field the
 worker is halfway through updating."""
@@ -22,6 +28,7 @@ from yubikit.core.smartcard import ApduError, SW, SmartCardConnection
 from yubikit.management import CAPABILITY, FORM_FACTOR, TRANSPORT
 from yubikit.oath import Code, Credential, CredentialData, OathSession
 
+from . import pcsc
 from .config import config
 from .keystore import KeyStore, default_store
 
@@ -85,7 +92,9 @@ class Backend:
       on_devices(list[DeviceSummary], active_fingerprint | None)
     """
 
-    POLL_INTERVAL = 1.0
+    # Cheap reader-name check when no event arrived for this long. Covers a
+    # missed status change; costs one SCardListReaders, no card I/O.
+    SAFETY_INTERVAL = 5.0
 
     def __init__(self, keystore: KeyStore | None = None) -> None:
         self.keystore: KeyStore = keystore or default_store()
@@ -105,6 +114,9 @@ class Backend:
         self._service_ok: bool | None = None
         self._selected_fp: str | None = None
         self._all_fps: tuple = ()
+        self._reader_names: list[str] | None = None
+        self._devices: list = []  # last ykman enumeration, reused while readers are unchanged
+        self._rescan = True  # enumerate on the next poll even if readers look the same
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="yubikey", daemon=True)
 
@@ -115,6 +127,7 @@ class Backend:
 
     def stop(self) -> None:
         self._stop.set()
+        self._queue.put(lambda: None)  # wake the worker so it exits promptly
 
     # -- public API (callable from the main thread) ------------------------
 
@@ -159,19 +172,28 @@ class Backend:
 
     def _run(self) -> None:
         self._poll()
-        while not self._stop.is_set():
-            try:
-                job = self._queue.get(timeout=self.POLL_INTERVAL)
-            except queue.Empty:
-                self._poll()
-                continue
-            try:
-                job()
-            except Exception as e:
-                log.exception("job failed")
-                self._emit(self.on_error, self._describe(e))
-                # A failing job usually means the key went away.
-                self._poll(force=True)
+        watcher = pcsc.ReaderWatcher(lambda: self._queue.put(self._reader_event))
+        watcher.start()
+        try:
+            while not self._stop.is_set():
+                try:
+                    job = self._queue.get(timeout=self.SAFETY_INTERVAL)
+                except queue.Empty:
+                    self._poll()
+                    continue
+                try:
+                    job()
+                except Exception as e:
+                    log.exception("job failed")
+                    self._emit(self.on_error, self._describe(e))
+                    # A failing job usually means the key went away.
+                    self._poll(force=True)
+        finally:
+            watcher.stop()
+
+    def _reader_event(self) -> None:
+        """A reader or card changed state: enumerate again."""
+        self._poll(rescan=True)
 
     @staticmethod
     def _emit(cb, *args) -> None:
@@ -187,17 +209,25 @@ class Backend:
             self._state = new
             self._emit(self.on_device, new)
 
-    def _poll(self, force: bool = False) -> None:
-        ok = _pcsc_available()
+    def _poll(self, force: bool = False, rescan: bool = False) -> None:
+        """Reconcile with what PC/SC reports. `force` re-emits the device state
+        even if the same key is still there; `rescan` re-runs ykman's
+        enumeration although the reader names did not change."""
+        names, ok = pcsc.reader_names()
         if ok != self._service_ok:
             self._service_ok = ok
             self._emit(self.on_service, ok)
-        devices = []
-        if ok:
+        if not ok:
+            self._devices = []
+        elif rescan or force or self._rescan or names != self._reader_names:
+            self._rescan = False
             try:
-                devices = list_all_devices([SmartCardConnection])
+                self._devices = list_all_devices([SmartCardConnection])
             except Exception as e:  # noqa: BLE001
                 log.debug("list_all_devices failed: %s", e)
+                self._devices = []
+        self._reader_names = names
+        devices = self._devices
         summaries = [DeviceSummary(d.fingerprint, _device_name(d, i), i.serial) for d, i in devices]
         fps = tuple(x.fingerprint for x in summaries)
 
@@ -215,8 +245,9 @@ class Backend:
 
         fp = chosen
         dev, info = next(((d, i) for d, i in devices if d.fingerprint == fp), (None, None))
-        if dev is None and ok and _yubikey_busy():
+        if dev is None and ok and pcsc.yubikey_busy(names):
             fp = "busy"
+            self._rescan = True  # keep trying until the other client lets go
         log.debug("poll: service=%s devices=%d fp=%r prev=%r", ok, len(devices), fp, self._fingerprint)
         if fp == self._fingerprint and not force:
             return
@@ -407,7 +438,7 @@ class Backend:
         if isinstance(e, BackendError):
             return str(e)
         msg = str(e) or e.__class__.__name__
-        if "not present" in msg.lower() or "removed" in msg.lower():
+        if pcsc.is_card_gone(e) or "not present" in msg.lower() or "removed" in msg.lower():
             return "YubiKey was removed"
         return msg
 
@@ -488,38 +519,6 @@ def _applications(info) -> dict[str, dict[str, bool]]:
         enabled = info.config.enabled_capabilities.get(transport, 0)
         out[transport.name] = {name: bool(enabled & cap) for cap, name in _APP_NAMES if supported & cap}
     return out
-
-
-def _pcsc_available() -> bool:
-    """True when pcscd answers. ykman swallows this error, so check directly."""
-    try:
-        from smartcard.System import readers
-
-        readers()
-        return True
-    except Exception as e:  # noqa: BLE001
-        return "Service not available" not in str(e) and "0x8010001D" not in str(e)
-
-
-def _yubikey_busy() -> bool:
-    """True when a YubiKey reader exists but the card is locked by another client
-    (typically Yubico Authenticator or GnuPG's scdaemon)."""
-    try:
-        from smartcard.System import readers
-
-        for r in readers():
-            if "yubi" not in str(r).lower():
-                continue
-            conn = r.createConnection()
-            try:
-                conn.connect()
-                conn.disconnect()
-            except Exception as e:  # noqa: BLE001
-                if "0x8010000B" in str(e) or "Sharing violation" in str(e):
-                    return True
-    except Exception as e:  # noqa: BLE001
-        log.debug("busy check failed: %s", e)
-    return False
 
 
 def _sort_key(c: Credential):
