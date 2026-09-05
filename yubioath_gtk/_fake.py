@@ -40,16 +40,45 @@ class FakeBackend(Backend):
 
     def start(self) -> None:
         self._state = DeviceState(
-            name="YubiKey 5C NFC", serial=12345678, fingerprint="fake1", version="5.7.1",
-            form_factor="USB-C Keychain", has_password=True,
+            name="YubiKey 5C NFC",
+            serial=12345678,
+            fingerprint="fake1",
+            version="5.7.1",
+            form_factor="USB-C Keychain",
+            has_password=True,
             applications={
-                "USB": {"Yubico OTP": True, "FIDO U2F": True, "FIDO2": True, "OATH": True, "PIV": True, "OpenPGP": False},
-                "NFC": {"Yubico OTP": True, "FIDO U2F": True, "FIDO2": True, "OATH": True, "PIV": False, "OpenPGP": False},
+                "USB": {
+                    "Yubico OTP": True,
+                    "FIDO U2F": True,
+                    "FIDO2": True,
+                    "OATH": True,
+                    "PIV": True,
+                    "OpenPGP": False,
+                },
+                "NFC": {
+                    "Yubico OTP": True,
+                    "FIDO U2F": True,
+                    "FIDO2": True,
+                    "OATH": True,
+                    "PIV": False,
+                    "OpenPGP": False,
+                },
             },
         )
-        devices = [DeviceSummary("fake1", "YubiKey 5C NFC", 12345678), DeviceSummary("fake2", "YubiKey 5 Nano", 87654321)]
-        GLib.timeout_add(600, lambda: (self.on_service(True), self.on_devices(devices, "fake1"),
-                                       self.on_device(self._state), self.refresh(), False)[-1])
+        devices = [
+            DeviceSummary("fake1", "YubiKey 5C NFC", 12345678),
+            DeviceSummary("fake2", "YubiKey 5 Nano", 87654321),
+        ]
+        GLib.timeout_add(
+            600,
+            lambda: (
+                self.on_service(True),
+                self.on_devices(devices, "fake1"),
+                self.on_device(self._state),
+                self.refresh(),
+                False,
+            )[-1],
+        )
 
     def stop(self) -> None:
         pass
@@ -83,14 +112,18 @@ class FakeBackend(Backend):
 
     def add(self, data, touch, done) -> None:
         cid = f"{data.issuer}:{data.name}".encode() if data.issuer else data.name.encode()
-        self._creds.append(Credential("fake", cid, data.issuer, data.name, data.oath_type, data.period, touch))
+        self._creds.append(
+            Credential("fake", cid, data.issuer, data.name, data.oath_type, data.period, touch)
+        )
         GLib.idle_add(lambda: (done(None), False)[1])
         self.refresh()
 
     def rename(self, cred, name, issuer) -> None:
         i = self._creds.index(cred)
         cid = f"{issuer}:{name}".encode() if issuer else name.encode()
-        self._creds[i] = Credential("fake", cid, issuer, name, cred.oath_type, cred.period, cred.touch_required)
+        self._creds[i] = Credential(
+            "fake", cid, issuer, name, cred.oath_type, cred.period, cred.touch_required
+        )
         self.refresh()
 
     def delete(self, cred) -> None:

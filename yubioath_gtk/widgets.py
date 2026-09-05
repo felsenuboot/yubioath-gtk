@@ -3,11 +3,12 @@ from __future__ import annotations
 import math
 import time
 
+import cairo
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, GObject, Gtk  # noqa: E402
+from gi.repository import Adw, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from yubikit.oath import OATH_TYPE, Code, Credential  # noqa: E402
 
@@ -26,6 +27,9 @@ class CountdownRing(Gtk.DrawingArea):
         super().__init__()
         self.set_size_request(self.SIZE, self.SIZE)
         self.set_valign(Gtk.Align.CENTER)
+        # Colour comes from CSS (.countdown-ring / .urgent in style.css), so it
+        # follows the accent colour and the theme without lookup_color().
+        self.add_css_class("countdown-ring")
         self._fraction = 0.0
         self._urgent = False
         self.set_draw_func(self._draw)
@@ -34,42 +38,29 @@ class CountdownRing(Gtk.DrawingArea):
         fraction = max(0.0, min(1.0, fraction))
         if fraction != self._fraction or urgent != self._urgent:
             self._fraction = fraction
-            self._urgent = urgent
+            if urgent != self._urgent:
+                self._urgent = urgent
+                if urgent:
+                    self.add_css_class("urgent")
+                else:
+                    self.remove_css_class("urgent")
             self.queue_draw()
 
     def _draw(self, area, cr, w, h) -> None:
         cx, cy = w / 2, h / 2
         r = min(w, h) / 2 - 2.5
-        lw = 3.0
-        track = self.get_color()
-        cr.set_line_width(lw)
-        cr.set_source_rgba(track.red, track.green, track.blue, 0.15)
+        color = self.get_color()
+        cr.set_line_width(3.0)
+        cr.set_source_rgba(color.red, color.green, color.blue, 0.15)
         cr.arc(cx, cy, r, 0, 2 * math.pi)
         cr.stroke()
         if self._fraction <= 0:
             return
-        if self._urgent:
-            fg = _named_color(self, "error_color", (0.88, 0.11, 0.14))
-        else:
-            fg = _accent(self)
-        cr.set_source_rgb(*fg)
-        cr.set_line_cap(1)  # ROUND
+        cr.set_source_rgba(color.red, color.green, color.blue, color.alpha)
+        cr.set_line_cap(cairo.LINE_CAP_ROUND)
         start = -math.pi / 2
         cr.arc(cx, cy, r, start, start + 2 * math.pi * self._fraction)
         cr.stroke()
-
-
-def _accent(widget: Gtk.Widget) -> tuple[float, float, float]:
-    try:
-        rgba = Adw.StyleManager.get_default().get_accent_color_rgba()
-        return (rgba.red, rgba.green, rgba.blue)
-    except Exception:  # noqa: BLE001
-        return _named_color(widget, "accent_color", (0.21, 0.52, 0.89))
-
-
-def _named_color(widget: Gtk.Widget, name: str, fallback):
-    ok, rgba = widget.get_style_context().lookup_color(name)
-    return (rgba.red, rgba.green, rgba.blue) if ok else fallback
 
 
 class AccountRow(Gtk.ListBoxRow):
@@ -109,7 +100,7 @@ class AccountRow(Gtk.ListBoxRow):
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.CENTER)
         title = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.issuer_label = Gtk.Label(xalign=0, ellipsize=3)
+        self.issuer_label = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END)
         self.issuer_label.add_css_class("heading")
         self.star = Gtk.Image.new_from_icon_name("starred-symbolic")
         self.star.set_pixel_size(12)
@@ -117,7 +108,7 @@ class AccountRow(Gtk.ListBoxRow):
         self.star.set_visible(False)
         title.append(self.issuer_label)
         title.append(self.star)
-        self.name_label = Gtk.Label(xalign=0, ellipsize=3)
+        self.name_label = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END)
         self.name_label.add_css_class("dim-label")
         self.name_label.add_css_class("caption")
         text.append(title)
@@ -235,7 +226,9 @@ class AccountRow(Gtk.ListBoxRow):
             self.code_label.set_text("••• •••")
             self.code_label.add_css_class("dim-label")
             if self.code is not None:  # hidden but valid: keep the ring ticking
-                self.indicator.set_visible_child_name("hotp" if self.cred.oath_type == OATH_TYPE.HOTP else "ring")
+                self.indicator.set_visible_child_name(
+                    "hotp" if self.cred.oath_type == OATH_TYPE.HOTP else "ring"
+                )
                 self.tick(time.time())
                 return
             if self.cred.oath_type == OATH_TYPE.HOTP:

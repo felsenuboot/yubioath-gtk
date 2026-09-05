@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import shutil
 import subprocess
-from typing import Callable
+from collections.abc import Callable
 
 import gi
 
@@ -63,7 +63,9 @@ class AddAccountDialog(Adw.Dialog):
             title="Type", model=Gtk.StringList.new(["Time based (TOTP)", "Counter based (HOTP)"])
         )
         self.type_row.connect("notify::selected", lambda *_: self._type_changed())
-        self.algo_row = Adw.ComboRow(title="Algorithm", model=Gtk.StringList.new(["SHA1", "SHA256", "SHA512"]))
+        self.algo_row = Adw.ComboRow(
+            title="Algorithm", model=Gtk.StringList.new(["SHA1", "SHA256", "SHA512"])
+        )
         self.digits_row = Adw.ComboRow(title="Digits", model=Gtk.StringList.new(["6", "8"]))
         self.period_row = Adw.SpinRow.new_with_range(15, 300, 1)
         self.period_row.set_title("Period (seconds)")
@@ -72,7 +74,14 @@ class AddAccountDialog(Adw.Dialog):
         self.counter_row.set_title("Initial counter")
         self.counter_row.set_visible(False)
         self.touch_row = Adw.SwitchRow(title="Require touch")
-        for r in (self.type_row, self.algo_row, self.digits_row, self.period_row, self.counter_row, self.touch_row):
+        for r in (
+            self.type_row,
+            self.algo_row,
+            self.digits_row,
+            self.period_row,
+            self.counter_row,
+            self.touch_row,
+        ):
             adv.add_row(r)
         g.add(adv)
         page.add(g)
@@ -122,7 +131,7 @@ class AddAccountDialog(Adw.Dialog):
         try:
             shot = subprocess.run(["grim", "-"], capture_output=True, check=True, timeout=10).stdout
             out = subprocess.run(
-                ["zbarimg", "-q", "--raw", "-"], input=shot, capture_output=True, timeout=20
+                ["zbarimg", "-q", "--raw", "-"], input=shot, capture_output=True, timeout=20, check=False
             ).stdout.decode(errors="replace")
         except Exception as e:  # noqa: BLE001
             self.set_sensitive(True)

@@ -65,7 +65,9 @@ class MainWindow(Adw.ApplicationWindow):
         header.pack_start(self.search_btn)
         menu = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=self._menu_model())
         header.pack_end(menu)
-        self.device_btn = Gtk.MenuButton(icon_name="drive-removable-media-symbolic", tooltip_text="Switch YubiKey")
+        self.device_btn = Gtk.MenuButton(
+            icon_name="drive-removable-media-symbolic", tooltip_text="Switch YubiKey"
+        )
         self.device_btn.set_visible(False)
         header.pack_start(self.device_btn)
         add_btn = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add account (Ctrl+N)")
@@ -80,7 +82,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.search_bar.connect_entry(self.search_entry)
         self.search_bar.set_key_capture_widget(self)
         self.search_btn.bind_property(
-            "active", self.search_bar, "search-mode-enabled", 1 | 2  # BIDIRECTIONAL | SYNC_CREATE
+            "active",
+            self.search_bar,
+            "search-mode-enabled",
+            GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE,
         )
         self.search_entry.connect("search-changed", lambda *_: self.listbox.invalidate_filter())
         self.search_entry.connect("stop-search", lambda *_: self.search_bar.set_search_mode(False))
@@ -105,11 +110,15 @@ class MainWindow(Adw.ApplicationWindow):
         self._add_action("forget-password", lambda *_: self.backend.forget_password())
         self._add_action("search", lambda *_: self.search_bar.set_search_mode(True), ["<Control>f"])
         self._add_action("close", lambda *_: self.close(), ["<Control>w"])
-        self._add_action("preferences", lambda *_: PreferencesDialog(self._pref_changed).present(self), ["<Control>comma"])
+        self._add_action(
+            "preferences", lambda *_: PreferencesDialog(self._pref_changed).present(self), ["<Control>comma"]
+        )
         self._add_action("device-info", lambda *_: self._show_device_info(), ["<Control>i"])
         self._add_action("password", lambda *_: self._show_password_dialog())
         self._add_action("reset-oath", lambda *_: self._confirm_reset())
-        self.device_action = Gio.SimpleAction.new_stateful("device", GLib.VariantType.new("s"), GLib.Variant("s", ""))
+        self.device_action = Gio.SimpleAction.new_stateful(
+            "device", GLib.VariantType.new("s"), GLib.Variant("s", "")
+        )
         self.device_action.connect("activate", self._device_chosen)
         self.add_action(self.device_action)
         for name in ("device-info", "password", "reset-oath"):
@@ -142,12 +151,11 @@ class MainWindow(Adw.ApplicationWindow):
             self.get_application().set_accels_for_action(f"win.{name}", accels)
 
     def _build_no_key(self) -> Gtk.Widget:
-        page = Adw.StatusPage(
+        return Adw.StatusPage(
             icon_name="yubioath-key-symbolic",
             title="Insert your YubiKey",
             description="Waiting for a YubiKey with OATH support…",
         )
-        return page
 
     def _build_no_service(self) -> Gtk.Widget:
         page = Adw.StatusPage(
@@ -201,7 +209,9 @@ class MainWindow(Adw.ApplicationWindow):
         group = Adw.PreferencesGroup()
         self.password_row = Adw.PasswordEntryRow(title="Password")
         self.password_row.connect("entry-activated", lambda *_: self._unlock())
-        self.remember_row = Adw.SwitchRow(title="Remember on this computer", subtitle="Stored in the system keyring")
+        self.remember_row = Adw.SwitchRow(
+            title="Remember on this computer", subtitle="Stored in the system keyring"
+        )
         group.add(self.password_row)
         group.add(self.remember_row)
         box.append(group)
@@ -338,7 +348,9 @@ class MainWindow(Adw.ApplicationWindow):
         return config.is_favorite(cred.device_id, cred.id)
 
     def _ordered(self, creds: list[Credential]) -> list[Credential]:
-        return sorted(creds, key=lambda c: (not self._is_fav(c), (c.issuer or c.name).lower(), c.name.lower()))
+        return sorted(
+            creds, key=lambda c: (not self._is_fav(c), (c.issuer or c.name).lower(), c.name.lower())
+        )
 
     def _decorate(self, row: AccountRow) -> None:
         row.set_favorite(self._is_fav(row.cred))
@@ -397,10 +409,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._refresh_source = None
         expiries = [c.valid_to for c in codes if c is not None and c.valid_to < 2**31]
         now = time.time()
-        if expiries:
-            delay = max(0.3, min(expiries) - now + 0.25)
-        else:
-            delay = 30.0
+        delay = max(0.3, min(expiries) - now + 0.25) if expiries else 30.0
         self._refresh_source = GLib.timeout_add(int(delay * 1000), self._do_scheduled_refresh)
 
     def _do_scheduled_refresh(self) -> bool:
@@ -412,7 +421,11 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def _visible_changed(self, *_) -> None:
-        if self.is_visible() and self.stack.get_visible_child_name() == "list" and self._refresh_source is None:
+        if (
+            self.is_visible()
+            and self.stack.get_visible_child_name() == "list"
+            and self._refresh_source is None
+        ):
             self.backend.refresh()
         self._changed()
 
@@ -506,7 +519,9 @@ class MainWindow(Adw.ApplicationWindow):
             return
 
         def on_set(pw, remember, done):
-            self.backend.set_password(pw, remember, lambda err: (done(err), err or self._toast("Password saved", 2)))
+            self.backend.set_password(
+                pw, remember, lambda err: (done(err), err or self._toast("Password saved", 2))
+            )
 
         def on_remove(done):
             self.backend.remove_password(lambda err: (done(err), err or self._toast("Password removed", 2)))

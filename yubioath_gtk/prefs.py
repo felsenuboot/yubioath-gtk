@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import gi
 
@@ -34,10 +34,14 @@ class PreferencesDialog(Adw.PreferencesDialog):
 
         self.pack_row = Adw.ActionRow(title="Icon pack", activatable=True)
         self.pack_row.set_subtitle_selectable(False)
-        pick = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Choose file")
+        pick = Gtk.Button(
+            icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Choose file"
+        )
         pick.add_css_class("flat")
         pick.connect("clicked", self._pick_pack)
-        self.clear_btn = Gtk.Button(icon_name="edit-clear-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Remove")
+        self.clear_btn = Gtk.Button(
+            icon_name="edit-clear-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Remove"
+        )
         self.clear_btn.add_css_class("flat")
         self.clear_btn.connect("clicked", lambda *_: self._set("icon_pack", None))
         self.pack_row.add_suffix(self.clear_btn)
@@ -53,7 +57,9 @@ class PreferencesDialog(Adw.PreferencesDialog):
         page.add(g)
 
         g = Adw.PreferencesGroup(title="Behaviour")
-        hide = Adw.SwitchRow(title="Hide codes until clicked", subtitle="Click a row to reveal and copy its code")
+        hide = Adw.SwitchRow(
+            title="Hide codes until clicked", subtitle="Click a row to reveal and copy its code"
+        )
         hide.set_active(bool(config.get("hide_codes")))
         hide.connect("notify::active", lambda r, _p: self._set("hide_codes", r.get_active()))
         g.add(hide)
@@ -66,7 +72,9 @@ class PreferencesDialog(Adw.PreferencesDialog):
         page.add(g)
 
         g = Adw.PreferencesGroup(title="Tray icon")
-        tray = Adw.SwitchRow(title="Show tray icon", subtitle="Accounts in a menu; click one to copy its code")
+        tray = Adw.SwitchRow(
+            title="Show tray icon", subtitle="Accounts in a menu; click one to copy its code"
+        )
         tray.set_active(bool(config.get("tray_icon")))
         g.add(tray)
         close = Adw.SwitchRow(

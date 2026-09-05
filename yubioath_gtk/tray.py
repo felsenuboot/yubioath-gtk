@@ -11,10 +11,11 @@ removes the icon from every host immediately.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from dataclasses import dataclass
-from typing import Callable
+from collections.abc import Callable
 
 import gi
 
@@ -182,17 +183,22 @@ class TrayIcon:
             for rid in self._reg_ids:
                 self._conn.unregister_object(rid)
             self._reg_ids = []
-            try:
+            with contextlib.suppress(GLib.Error):
                 self._conn.close_sync(None)
-            except GLib.Error:
-                pass
             self._conn = None
         self.registered = False
 
     def _watcher_appeared(self, conn, _name, _owner) -> None:
         conn.call(
-            WATCHER, WATCHER_PATH, WATCHER, "RegisterStatusNotifierItem",
-            GLib.Variant("(s)", (conn.get_unique_name(),)), None, Gio.DBusCallFlags.NONE, -1, None,
+            WATCHER,
+            WATCHER_PATH,
+            WATCHER,
+            "RegisterStatusNotifierItem",
+            GLib.Variant("(s)", (conn.get_unique_name(),)),
+            None,
+            Gio.DBusCallFlags.NONE,
+            -1,
+            None,
             self._registered,
         )
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import gi
 
@@ -86,7 +86,9 @@ class PasswordDialog(Adw.Dialog):
         )
         self.pw = Adw.PasswordEntryRow(title="New password")
         self.confirm = Adw.PasswordEntryRow(title="Confirm password")
-        self.remember = Adw.SwitchRow(title="Remember on this computer", subtitle="Stored in the system keyring")
+        self.remember = Adw.SwitchRow(
+            title="Remember on this computer", subtitle="Stored in the system keyring"
+        )
         self.remember.set_active(True)
         for r in (self.pw, self.confirm):
             r.connect("changed", lambda *_: self._validate())
