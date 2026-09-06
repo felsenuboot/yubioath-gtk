@@ -6,7 +6,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, GObject, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
 from yubikit.oath import OATH_TYPE, Code, Credential, CredentialData  # noqa: E402
 
@@ -66,7 +66,9 @@ class MainWindow(Adw.ApplicationWindow):
         header = Adw.HeaderBar()
         self.title_widget = Adw.WindowTitle(title="YubiOath", subtitle="")
         header.set_title_widget(self.title_widget)
-        self.search_btn = Gtk.ToggleButton(icon_name="edit-find-symbolic", tooltip_text="Search (Ctrl+F)")
+        self.search_btn = Gtk.ToggleButton(
+            icon_name="edit-find-symbolic", tooltip_text="Search (Ctrl+F or /)"
+        )
         header.pack_start(self.search_btn)
         menu = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=self._menu_model())
         header.pack_end(menu)
@@ -96,6 +98,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.search_entry.connect("stop-search", lambda *_: self.search_bar.set_search_mode(False))
         self.search_entry.connect("activate", self._activate_first_visible)
         view.add_top_bar(self.search_bar)
+        # The search bar's key capture (set above) forwards any printable key
+        # into the entry, so a bare "/" would open the search *and* be typed.
+        # Controllers run newest-first, so this one sees the key before the
+        # search bar does and can swallow it.
+        keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", self._on_key_pressed)
+        self.add_controller(keys)
 
         # -- pages ---------------------------------------------------------
         self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
@@ -113,7 +122,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._add_action("add", lambda *_: self._show_add_dialog(), ["<Control>n"])
         self._add_action("refresh", lambda *_: self.backend.refresh(), ["F5", "<Control>r"])
         self._add_action("forget-password", lambda *_: self.backend.forget_password())
-        self._add_action("search", lambda *_: self.search_bar.set_search_mode(True), ["<Control>f"])
+        self._add_action("search", lambda *_: self._open_search(), ["<Control>f"])
         self._add_action("close", lambda *_: self.close(), ["<Control>w"])
         self._add_action(
             "preferences", lambda *_: PreferencesDialog(self._pref_changed).present(self), ["<Control>comma"]
@@ -590,6 +599,19 @@ class MainWindow(Adw.ApplicationWindow):
             return True
         q = self.search_entry.get_text().strip().lower()
         return all(part in row.search_text for part in q.split())
+
+    def _open_search(self) -> None:
+        self.search_bar.set_search_mode(True)
+        self.search_entry.grab_focus()
+
+    def _on_key_pressed(self, _ctl, keyval, _keycode, state) -> bool:
+        """ "/" opens the search like Ctrl+F, unless the user is typing somewhere."""
+        if keyval != Gdk.KEY_slash or state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK):
+            return False
+        if isinstance(self.get_focus(), (Gtk.Editable, Gtk.TextView)):
+            return False
+        self._open_search()
+        return True
 
     def _activate_first_visible(self, *_) -> None:
         i = 0

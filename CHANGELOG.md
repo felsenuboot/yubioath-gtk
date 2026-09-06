@@ -24,6 +24,9 @@ Towards v0.3.0 (Efficiency) and v0.4.0 (Portability).
 
 ### Fixed
 - Two config flushes racing could land the older snapshot last.
+- Pressing `/` in the account list opened the search but also typed the `/`
+  into the search field. `/` now only opens the search, like Ctrl+F, and
+  Ctrl+F focuses the search field even when the bar is already open.
 
 ### Pending (open pull request #47, needs a hardware check)
 - Event-driven key detection via `SCardGetStatusChange`; no more per-second

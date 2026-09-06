@@ -36,7 +36,7 @@ over PC/SC, with no background service of its own.
 - ➕ **Add accounts.** From an `otpauth://` URI, a QR code on screen
   (grim + zbarimg) or by hand, with 6/7/8 digits and any period the key
   accepts.
-- ✏️ **Manage.** Rename and delete accounts, search with Ctrl+F.
+- ✏️ **Manage.** Rename and delete accounts, search with Ctrl+F or `/`.
 - 🔑 **Several keys.** Device info page; switch between connected keys.
 - 📋 **Tray icon.** The accounts in a menu: click one to copy its code without
   opening the window; close to tray and start hidden.
@@ -127,7 +127,7 @@ Add `pin = true` if it should stay visible on every workspace.
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+F | Search; Enter copies the first match |
+| Ctrl+F or / | Search; Enter copies the first match |
 | Ctrl+N | Add account |
 | Ctrl+I | Device info |
 | Ctrl+, | Preferences |
